@@ -3,7 +3,7 @@ name = "ebpf"
 version.workspace = true
 edition.workspace = true
 
-[[bin]]
+[lib]
 name = "ebpf"
 path = "src/lib.rs"
 

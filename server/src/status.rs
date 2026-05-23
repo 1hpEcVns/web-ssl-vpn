@@ -1,5 +1,13 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDetail {
+    pub username: String,
+    pub source_ip: String,
+    pub connected_at: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemStats {
@@ -9,6 +17,7 @@ pub struct SystemStats {
     pub bytes_sent: u64,
     pub bytes_recv: u64,
     pub active_sessions: u64,
+    pub session_details: Vec<SessionDetail>,
     pub timestamp: i64,
 }
 
@@ -21,9 +30,17 @@ impl Default for SystemStats {
             bytes_sent: 0,
             bytes_recv: 0,
             active_sessions: 0,
-            timestamp: chrono::Utc::now().timestamp(),
+            session_details: Vec::new(),
+            timestamp: Utc::now().timestamp(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct SessionInfo {
+    username: String,
+    source_ip: String,
+    connected_at: DateTime<Utc>,
 }
 
 pub struct StatusCollector {
@@ -33,9 +50,6 @@ pub struct StatusCollector {
     bytes_recv: u64,
     sessions: HashMap<String, SessionInfo>,
 }
-
-#[derive(Debug, Clone)]
-struct SessionInfo;
 
 impl StatusCollector {
     pub fn new() -> Self {
@@ -54,17 +68,27 @@ impl StatusCollector {
         self.bytes_recv = self.bytes_recv.wrapping_add(recv);
     }
 
-    #[allow(dead_code)]
-    pub fn add_session(&mut self, session_id: String) {
-        self.sessions.insert(session_id, SessionInfo);
+    pub fn add_session_with_info(&mut self, session_id: String, username: &str, source_ip: &str) {
+        self.sessions.insert(session_id, SessionInfo {
+            username: username.to_string(),
+            source_ip: source_ip.to_string(),
+            connected_at: Utc::now(),
+        });
     }
 
-    #[allow(dead_code)]
     pub fn remove_session(&mut self, session_id: &str) {
         self.sessions.remove(session_id);
     }
 
     pub fn get_stats(&self) -> SystemStats {
+        let session_details = self.sessions.iter().map(|(_id, info)| {
+            SessionDetail {
+                username: info.username.clone(),
+                source_ip: info.source_ip.clone(),
+                connected_at: info.connected_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            }
+        }).collect();
+
         SystemStats {
             uptime: self.start_time.elapsed().as_secs(),
             connections: self.sessions.len() as u64,
@@ -72,7 +96,8 @@ impl StatusCollector {
             bytes_sent: self.bytes_sent,
             bytes_recv: self.bytes_recv,
             active_sessions: self.sessions.len() as u64,
-            timestamp: chrono::Utc::now().timestamp(),
+            session_details,
+            timestamp: Utc::now().timestamp(),
         }
     }
 }
@@ -105,12 +130,14 @@ mod tests {
     #[test]
     fn test_add_and_remove_session() {
         let mut c = StatusCollector::new();
-        c.add_session("session-1".into());
+        c.add_session_with_info("session-1".into(), "admin", "1.2.3.4");
         let stats = c.get_stats();
         assert_eq!(stats.active_sessions, 1);
         assert_eq!(stats.connections, 1);
+        assert_eq!(stats.session_details.len(), 1);
+        assert_eq!(stats.session_details[0].username, "admin");
 
-        c.add_session("session-2".into());
+        c.add_session_with_info("session-2".into(), "user1", "5.6.7.8");
         let stats = c.get_stats();
         assert_eq!(stats.active_sessions, 2);
 
@@ -121,6 +148,7 @@ mod tests {
         c.remove_session("session-2");
         let stats = c.get_stats();
         assert_eq!(stats.active_sessions, 0);
+        assert_eq!(stats.session_details.len(), 0);
     }
 
     #[test]

@@ -34,7 +34,7 @@ const TCP_ACK: u8 = 0x10;
 
 #[classifier]
 pub fn tc_ingress(ctx: TcContext) -> i32 {
-    let ether_type: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + ETHER_TYPE_OFF) } {
+    let ether_type: u16 = match ctx.load::<u16>(ETH_HDR_LEN + ETHER_TYPE_OFF) {
         Ok(v) => u16::from_be(v),
         Err(_) => return TC_ACT_OK,
     };
@@ -42,7 +42,7 @@ pub fn tc_ingress(ctx: TcContext) -> i32 {
         return TC_ACT_OK;
     }
 
-    let tot_len: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + IP_LEN_OFF) } {
+    let tot_len: u16 = match ctx.load::<u16>(ETH_HDR_LEN + IP_LEN_OFF) {
         Ok(v) => u16::from_be(v),
         Err(_) => return TC_ACT_OK,
     };
@@ -52,13 +52,13 @@ pub fn tc_ingress(ctx: TcContext) -> i32 {
         unsafe { *val = (*val).wrapping_add(ip_len) };
     }
 
-    let proto: u8 = match unsafe { ctx.load::<u8>(ETH_HDR_LEN + IP_PROTO_OFF) } {
+    let proto: u8 = match ctx.load::<u8>(ETH_HDR_LEN + IP_PROTO_OFF) {
         Ok(v) => v,
         Err(_) => return TC_ACT_OK,
     };
     if proto == IpProto::Tcp as u8 {
         let flags_off = ETH_HDR_LEN + IPV4_HDR_LEN + TCP_HDR_OFF_FLAGS;
-        let flags_byte: u8 = match unsafe { ctx.load::<u8>(flags_off + 1) } {
+        let flags_byte: u8 = match ctx.load::<u8>(flags_off + 1) {
             Ok(v) => v,
             Err(_) => return TC_ACT_OK,
         };
@@ -80,7 +80,7 @@ pub fn tc_ingress(ctx: TcContext) -> i32 {
 
 #[classifier]
 pub fn tc_egress(ctx: TcContext) -> i32 {
-    let ether_type: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + ETHER_TYPE_OFF) } {
+    let ether_type: u16 = match ctx.load::<u16>(ETH_HDR_LEN + ETHER_TYPE_OFF) {
         Ok(v) => u16::from_be(v),
         Err(_) => return TC_ACT_OK,
     };
@@ -88,7 +88,7 @@ pub fn tc_egress(ctx: TcContext) -> i32 {
         return TC_ACT_OK;
     }
 
-    let tot_len: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + IP_LEN_OFF) } {
+    let tot_len: u16 = match ctx.load::<u16>(ETH_HDR_LEN + IP_LEN_OFF) {
         Ok(v) => u16::from_be(v),
         Err(_) => return TC_ACT_OK,
     };

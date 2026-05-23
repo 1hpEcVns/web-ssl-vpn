@@ -203,7 +203,7 @@ pub async fn init_database(db_path: &Path) -> Result<DatabaseConnection, DbErr> 
     Ok(db)
 }
 
-async fn create_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn create_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
     db.execute(
         &Table::create()
             .table(UserEntity)
@@ -270,8 +270,9 @@ async fn create_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
 async fn create_default_admin(db: &DatabaseConnection) -> Result<(), DbErr> {
     let count = UserEntity::find().count(db).await?;
     if count == 0 {
+        let salt: [u8; 16] = *uuid::Uuid::new_v4().as_bytes();
         let hash = argon2::hash_encoded(
-            b"admin123", b"web-ssl-vpn-salt-2024", &argon2::Config::default(),
+            b"admin123", &salt, &argon2::Config::default(),
         ).map_err(|e| DbErr::Custom(format!("argon2 error: {}", e)))?;
 
         UserActiveModel {
@@ -332,11 +333,6 @@ pub async fn create_user(db: &DatabaseConnection, username: &str, password_hash:
     Ok(model_to_user(result))
 }
 
-#[allow(dead_code)]
-pub async fn is_admin(db: &DatabaseConnection, user_id: i64) -> Result<bool, DbErr> {
-    let user = find_user_by_id(db, user_id).await?;
-    Ok(user.map(|u| u.role == "admin").unwrap_or(false))
-}
 
 // ============ Session operations ============
 
@@ -360,7 +356,14 @@ pub async fn delete_session(db: &DatabaseConnection, session_id: &str) -> Result
     Ok(())
 }
 
-pub async fn cleanup_expired_sessions(_db: &DatabaseConnection) -> Result<(), DbErr> {
+pub async fn cleanup_expired_sessions(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    let deleted = SessionEntity::delete_many()
+        .filter(SessionColumn::ExpiresAt.lt(&now))
+        .exec(db).await?;
+    if deleted.rows_affected > 0 {
+        log::info!("Cleaned up {} expired sessions", deleted.rows_affected);
+    }
     Ok(())
 }
 
@@ -477,7 +480,8 @@ mod tests {
     }
 
     fn hash_password(pw: &str) -> String {
-        argon2::hash_encoded(pw.as_bytes(), b"test-salt", &argon2::Config::default()).unwrap()
+        let salt: [u8; 16] = *uuid::Uuid::new_v4().as_bytes();
+        argon2::hash_encoded(pw.as_bytes(), &salt, &argon2::Config::default()).unwrap()
     }
 
     #[tokio::test]
@@ -635,18 +639,5 @@ mod tests {
 
         let limited = get_audit_logs(&db, 2).await.unwrap();
         assert_eq!(limited.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_is_admin() {
-        let db = setup_db().await;
-        create_user(&db, "admin_user", &hash_password("p"), "admin").await.unwrap();
-        create_user(&db, "normal_user", &hash_password("p"), "user").await.unwrap();
-
-        let admin = find_user_by_username(&db, "admin_user").await.unwrap().unwrap();
-        let normal = find_user_by_username(&db, "normal_user").await.unwrap().unwrap();
-
-        assert!(is_admin(&db, admin.id).await.unwrap());
-        assert!(!is_admin(&db, normal.id).await.unwrap());
     }
 }
