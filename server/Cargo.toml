@@ -1,0 +1,29 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+pingora = { workspace = true }
+pingora-core = { workspace = true }
+pingora-proxy = { workspace = true }
+pingora-http = { workspace = true }
+pingora-error = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+sea-orm = { workspace = true }
+sea-query = "=1.0.0-rc.33"
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust-argon2 = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+aya = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
