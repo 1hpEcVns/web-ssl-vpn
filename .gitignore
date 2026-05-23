@@ -3,5 +3,11 @@ target/
 .zig-cache/
 web/.cache/
 certs/
+web/dist/
+web/wasm-bindgen
 vpn.db
+vpn.db-journal
+vpn.db-wal
+vpn.db-shm
+*.bak
 /tmp/
