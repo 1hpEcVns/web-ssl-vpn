@@ -8,7 +8,7 @@ pub fn build(b: *std.Build) void {
     const check_step  = b.step("check",     "cargo check server + web + ebpf (fast compile check)");
     const test_step   = b.step("test",      "cargo test all packages");
     const wasm_step   = b.step("wasm",      "Full frontend: certs + trust + trunk");
-    const run_step    = b.step("run",       "Build all + start server (debug)");
+    const run_step    = b.step("run",       "Build all + start server (debug, eBPF optional)");
     const ebpf_build  = b.step("ebpf-build","Build eBPF BPF program (bpfel-unknown-none)");
     const ebpf_run    = b.step("ebpf-run",  "Build eBPF + trunk + server, run with sudo (BPF attach)");
     const release_step = b.step("release",  "Release build: certs + trunk --release + cargo build --release");
@@ -98,58 +98,6 @@ pub fn build(b: *std.Build) void {
     check_web.setCwd(.{ .cwd_relative = "." });
     check_web.step.dependOn(&check_server.step);
 
-    check_step.dependOn(&check_web.step);
-
-    // ── Test ──────────────────────────────────────────
-
-    const test_cmd = b.addSystemCommand(&.{ "cargo", "test" });
-    test_cmd.setCwd(.{ .cwd_relative = "." });
-
-    test_step.dependOn(&test_cmd.step);
-
-    // ── eBPF Build ────────────────────────────────────
-
-    const ebpf_build_cmd = b.addSystemCommand(&.{
-        "bash", "-c",
-        \\export RUSTUP_TOOLCHAIN=nightly
-        \\export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v 'cargo-' | grep -v 'rustc-wrapper' | tr '\n' ':')
-        \\export RUSTFLAGS="--emit=obj"
-        \\rustup run nightly cargo build -p ebpf --target bpfel-unknown-none --release -Z build-std=core
-        \\cp target/bpfel-unknown-none/release/deps/ebpf-*.o target/bpfel-unknown-none/release/ebpf 2>/dev/null || true
-    });
-    ebpf_build_cmd.setCwd(.{ .cwd_relative = "." });
-
-    ebpf_build.dependOn(&ebpf_build_cmd.step);
-
-    // ── Run (debug) ───────────────────────────────────
-
-    const run_cmd = b.addSystemCommand(&.{ "cargo", "run", "-p", "server" });
-    run_cmd.setCwd(.{ .cwd_relative = "." });
-    run_cmd.step.dependOn(&rm_csr.step);
-    run_cmd.step.dependOn(&gen_bundle.step);
-    run_cmd.step.dependOn(&trunk_cmd.step);
-    run_cmd.step.dependOn(&ebpf_build_cmd.step);
-
-    run_step.dependOn(&run_cmd.step);
-
-    // ── eBPF Run ──────────────────────────────────────
-
-    const ebpf_run_cmd = b.addSystemCommand(&.{
-        "bash", "-c",
-        \\echo "=== eBPF requires root for TC attach ==="
-        \\sudo -v || { echo "sudo authentication failed"; exit 1; }
-        \\sudo -E cargo run -p server
-    });
-    ebpf_run_cmd.setCwd(.{ .cwd_relative = "." });
-    ebpf_run_cmd.step.dependOn(&rm_csr.step);
-    ebpf_run_cmd.step.dependOn(&gen_bundle.step);
-    ebpf_run_cmd.step.dependOn(&trunk_cmd.step);
-    ebpf_run_cmd.step.dependOn(&ebpf_build_cmd.step);
-
-    ebpf_run.dependOn(&ebpf_run_cmd.step);
-
-    // ── Check (extended) ───────────────────────────────
-
     const check_ebpf = b.addSystemCommand(&.{
         "bash", "-c",
         \\export RUSTUP_TOOLCHAIN=nightly
@@ -158,6 +106,83 @@ pub fn build(b: *std.Build) void {
     });
     check_ebpf.setCwd(.{ .cwd_relative = "." });
     check_web.step.dependOn(&check_ebpf.step);
+
+    check_step.dependOn(&check_web.step);
+
+    // ── Test ──────────────────────────────────────────
+
+    const test_server = b.addSystemCommand(&.{ "cargo", "test", "-p", "server" });
+    test_server.setCwd(.{ .cwd_relative = "." });
+
+    test_step.dependOn(&test_server.step);
+
+    // ── eBPF Build ────────────────────────────────────
+
+    const ebpf_build_cmd = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\export RUSTUP_TOOLCHAIN=nightly
+        \\export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v 'cargo-' | grep -v 'rustc-wrapper' | tr '\n' ':')
+        \\rustup run nightly cargo build -p ebpf --target bpfel-unknown-none --release -Z build-std=core
+        \\if [ -f target/bpfel-unknown-none/release/ebpf ]; then
+        \\  echo "eBPF binary ready"
+        \\else
+        \\  echo "eBPF build failed: no binary at target/bpfel-unknown-none/release/ebpf"
+        \\  exit 1
+        \\fi
+    });
+    ebpf_build_cmd.setCwd(.{ .cwd_relative = "." });
+
+    ebpf_build.dependOn(&ebpf_build_cmd.step);
+
+    // ── Server build (shared) ─────────────────────────
+
+    const build_server = b.addSystemCommand(&.{ "cargo", "build", "-p", "server" });
+    build_server.setCwd(.{ .cwd_relative = "." });
+    build_server.step.dependOn(&rm_csr.step);
+    build_server.step.dependOn(&gen_bundle.step);
+    build_server.step.dependOn(&trunk_cmd.step);
+
+    // ── Run (debug, no eBPF) ──────────────────────────
+
+    const run_cmd = b.addSystemCommand(&.{ "cargo", "run", "-p", "server" });
+    run_cmd.setCwd(.{ .cwd_relative = "." });
+    run_cmd.step.dependOn(&build_server.step);
+
+    run_step.dependOn(&run_cmd.step);
+
+    // ── eBPF Run (with sudo for TC attach) ────────────
+
+    const build_ebpf_server = b.addSystemCommand(&.{ "cargo", "build", "-p", "server" });
+    build_ebpf_server.setCwd(.{ .cwd_relative = "." });
+    build_ebpf_server.step.dependOn(&rm_csr.step);
+    build_ebpf_server.step.dependOn(&gen_bundle.step);
+    build_ebpf_server.step.dependOn(&trunk_cmd.step);
+    build_ebpf_server.step.dependOn(&ebpf_build_cmd.step);
+
+    const ebpf_run_cmd = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\echo "=== eBPF mode: TC attach requires root ==="
+        \\SYSUDO=""
+        \\for p in /run/wrappers/bin/sudo /usr/bin/sudo /bin/sudo; do
+        \\  if [ -x "$p" ] && [ -u "$p" ]; then SYSUDO="$p"; break; fi
+        \\done
+        \\if [ -z "$SYSUDO" ]; then
+        \\  echo "ebpf-run: no suid sudo found. Try running outside nix develop, or run manually with sudo."
+        \\  exit 1
+        \\fi
+        \\if [ "$(id -u)" = "0" ]; then
+        \\  exec ./target/debug/server
+        \\fi
+        \\if ! "$SYSUDO" -n true 2>/dev/null; then
+        \\  echo "Password required for eBPF privilege escalation."
+        \\fi
+        \\"$SYSUDO" -v || { echo "sudo: authentication failed"; exit 1; }
+        \\exec "$SYSUDO" ./target/debug/server
+    });
+    ebpf_run_cmd.setCwd(.{ .cwd_relative = "." });
+    ebpf_run_cmd.step.dependOn(&build_ebpf_server.step);
+
+    ebpf_run.dependOn(&ebpf_run_cmd.step);
 
     // ── Release ───────────────────────────────────────
 

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="738.57" height="379.43" xmlns="http://www.w3.org/2000/svg">
+<rect width="738.57" height="379.43" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="12.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="49.40px" xml:space="preserve"><tspan fill="#eceff4">[</tspan>workspace<tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="63.80px" xml:space="preserve">resolver <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;2&quot;</tspan>
+</text><text x="20.00px" y="78.20px" xml:space="preserve">members <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">[</tspan><tspan fill="#a3be8c">&quot;server&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;web&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;ebpf&quot;</tspan><tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="92.60px" xml:space="preserve">
+</text><text x="20.00px" y="107.00px" xml:space="preserve"><tspan fill="#eceff4">[</tspan>workspace<tspan fill="#eceff4">.</tspan>package<tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="121.40px" xml:space="preserve">version <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.1.0&quot;</tspan>
+</text><text x="20.00px" y="135.80px" xml:space="preserve">edition <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;2021&quot;</tspan>
+</text><text x="20.00px" y="150.20px" xml:space="preserve">authors <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">[</tspan><tspan fill="#a3be8c">&quot;Web SSL VPN Team&quot;</tspan><tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="164.60px" xml:space="preserve">license <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;MIT&quot;</tspan>
+</text><text x="20.00px" y="179.00px" xml:space="preserve">
+</text><text x="20.00px" y="193.40px" xml:space="preserve"><tspan fill="#eceff4">[</tspan>workspace<tspan fill="#eceff4">.</tspan>dependencies<tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="207.80px" xml:space="preserve">pingora <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">{</tspan> version <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.8&quot;</tspan><tspan fill="#eceff4">,</tspan> features <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">[</tspan><tspan fill="#a3be8c">&quot;openssl&quot;</tspan><tspan fill="#eceff4">]</tspan> <tspan fill="#eceff4">}</tspan>
+</text><text x="20.00px" y="222.20px" xml:space="preserve">pingora-core <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.8&quot;</tspan>
+</text><text x="20.00px" y="236.60px" xml:space="preserve">pingora-proxy <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.8&quot;</tspan>
+</text><text x="20.00px" y="251.00px" xml:space="preserve">pingora-http <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.8&quot;</tspan>
+</text><text x="20.00px" y="265.40px" xml:space="preserve">pingora-error <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.8&quot;</tspan>
+</text><text x="20.00px" y="279.80px" xml:space="preserve">bytes <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;1&quot;</tspan>
+</text><text x="20.00px" y="294.20px" xml:space="preserve">http <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;1&quot;</tspan>
+</text><text x="20.00px" y="308.60px" xml:space="preserve">async-trait <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.1&quot;</tspan>
+</text><text x="20.00px" y="323.00px" xml:space="preserve">tokio <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">{</tspan> version <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;1&quot;</tspan><tspan fill="#eceff4">,</tspan> features <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">[</tspan><tspan fill="#a3be8c">&quot;full&quot;</tspan><tspan fill="#eceff4">]</tspan> <tspan fill="#eceff4">}</tspan>
+</text><text x="20.00px" y="337.40px" xml:space="preserve">sea-orm <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">{</tspan> version <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;=2.0.0-rc.38&quot;</tspan><tspan fill="#eceff4">,</tspan> features <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">[</tspan><tspan fill="#a3be8c">&quot;sqlx-sqlite&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;runtime-tokio-native-tls&quot;</tspan><tspan fill="#eceff4">]</tspan> <tspan fill="#eceff4">}</tspan>
+</text><text x="20.00px" y="351.80px" xml:space="preserve">iced <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">{</tspan> version <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;0.14&quot;</tspan><tspan fill="#eceff4">,</tspan> features <tspan fill="#eceff4">=</tspan> <tspan fill="#eceff4">[</tspan><tspan fill="#a3be8c">&quot;webgl&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;fira-sans&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;tiny-skia&quot;</tspan><tspan fill="#eceff4">]</tspan> <tspan fill="#eceff4">}</tspan></text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

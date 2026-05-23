@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="911.19" height="251.71" xmlns="http://www.w3.org/2000/svg">
+<rect width="911.19" height="251.71" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="13.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="50.60px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">fn</tspan> <tspan fill="#88c0d0">inject_demo_flag</tspan><tspan fill="#eceff4">(</tspan>html: <tspan fill="#81a1c1">&amp;</tspan><tspan fill="#81a1c1">str</tspan><tspan fill="#eceff4">)</tspan> -&gt; <tspan fill="#81a1c1">String</tspan> <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="66.20px" xml:space="preserve">    html<tspan fill="#eceff4">.</tspan>replace<tspan fill="#eceff4">(</tspan><tspan fill="#a3be8c">&quot;&lt;/head&gt;&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;&lt;script&gt;window.__VPN_DEMO__=true;&lt;/script&gt;&lt;/head&gt;&quot;</tspan><tspan fill="#eceff4">)</tspan>
+</text><text x="20.00px" y="81.80px" xml:space="preserve"><tspan fill="#eceff4">}</tspan>
+</text><text x="20.00px" y="97.40px" xml:space="preserve">
+</text><text x="20.00px" y="113.00px" xml:space="preserve"><tspan fill="#616e87" font-style="italic">//// ProxyHttp
+</tspan></text><text x="20.00px" y="128.60px" xml:space="preserve"><tspan fill="#616e87" font-style="italic"/>
+</text><text x="20.00px" y="144.20px" xml:space="preserve"><tspan fill="#5e81ac" font-style="italic">#[async_trait]</tspan>
+</text><text x="20.00px" y="159.80px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">impl</tspan> ProxyHttp <tspan fill="#81a1c1" font-weight="bold">for</tspan> App <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="175.40px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">type</tspan> <tspan fill="#8fbcbb">CTX</tspan> <tspan fill="#81a1c1">=</tspan> <tspan fill="#eceff4">();</tspan>
+</text><text x="20.00px" y="191.00px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">fn</tspan> <tspan fill="#88c0d0">new_ctx</tspan><tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>self<tspan fill="#eceff4">)</tspan> -&gt; <tspan fill="#8fbcbb">Self</tspan>::<tspan fill="#8fbcbb">CTX</tspan> <tspan fill="#eceff4">{}</tspan>
+</text><text x="20.00px" y="206.60px" xml:space="preserve">
+</text><text x="20.00px" y="222.20px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">fn</tspan> <tspan fill="#88c0d0">suppress_error_log</tspan><tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>self<tspan fill="#eceff4">,</tspan> _session: <tspan fill="#81a1c1">&amp;</tspan><tspan fill="#8fbcbb">Session</tspan><tspan fill="#eceff4">,</tspan> _ctx: <tspan fill="#81a1c1">&amp;</tspan><tspan fill="#8fbcbb">Self</tspan>::<tspan fill="#8fbcbb">CTX</tspan><tspan fill="#eceff4">,</tspan> error: <tspan fill="#81a1c1">&amp;</tspan><tspan fill="#8fbcbb">pingora_core</tspan>::Error<tspan fill="#eceff4">)</tspan> -&gt; <tspan fill="#81a1c1">bool</tspan> <tspan fill="#eceff4">{</tspan></text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

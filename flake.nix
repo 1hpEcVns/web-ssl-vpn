@@ -28,6 +28,7 @@
               cmake
               perl
               sudo
+              llvmPackages_latest.llvm
             ];
 
             RUSTUP_TOOLCHAIN = "stable";

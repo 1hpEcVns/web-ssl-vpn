@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="560.00" height="134.29" xmlns="http://www.w3.org/2000/svg">
+<rect width="560.00" height="134.29" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="12.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="49.40px" xml:space="preserve"><tspan fill="#eceff4">[</tspan>build<tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="63.80px" xml:space="preserve">dist <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;dist&quot;</tspan>
+</text><text x="20.00px" y="78.20px" xml:space="preserve">
+</text><text x="20.00px" y="92.60px" xml:space="preserve"><tspan fill="#eceff4">[</tspan>tools<tspan fill="#eceff4">]</tspan>
+</text><text x="20.00px" y="107.00px" xml:space="preserve">wasm-bindgen <tspan fill="#eceff4">=</tspan> <tspan fill="#a3be8c">&quot;/home/ihpecvns/Projects/web-ssl-vpn/web/wasm-bindgen&quot;</tspan>
+</text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

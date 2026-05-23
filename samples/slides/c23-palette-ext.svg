@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="352.86" height="220.86" xmlns="http://www.w3.org/2000/svg">
+<rect width="352.86" height="220.86" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="12.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="49.40px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">use</tspan> iced::Color<tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="63.80px" xml:space="preserve">
+</text><text x="20.00px" y="78.20px" xml:space="preserve"><tspan fill="#5e81ac" font-style="italic">#[derive(Clone, Copy, Debug, PartialEq)]</tspan>
+</text><text x="20.00px" y="92.60px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">struct</tspan> <tspan fill="#8fbcbb">PaletteExtension</tspan> <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="107.00px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">pub</tspan> is_nightly: <tspan fill="#81a1c1">bool</tspan><tspan fill="#eceff4">,</tspan>
+</text><text x="20.00px" y="121.40px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">pub</tspan> alpha_chart_badge: <tspan fill="#81a1c1">f32</tspan><tspan fill="#eceff4">,</tspan>
+</text><text x="20.00px" y="135.80px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">pub</tspan> alpha_round_borders: <tspan fill="#81a1c1">f32</tspan><tspan fill="#eceff4">,</tspan>
+</text><text x="20.00px" y="150.20px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">pub</tspan> alpha_round_containers: <tspan fill="#81a1c1">f32</tspan><tspan fill="#eceff4">,</tspan>
+</text><text x="20.00px" y="164.60px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">pub</tspan> buttons_color: <tspan fill="#8fbcbb">Color</tspan><tspan fill="#eceff4">,</tspan>
+</text><text x="20.00px" y="179.00px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">pub</tspan> red_alert_color: <tspan fill="#8fbcbb">Color</tspan><tspan fill="#eceff4">,</tspan>
+</text><text x="20.00px" y="193.40px" xml:space="preserve"><tspan fill="#eceff4">}</tspan>
+</text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

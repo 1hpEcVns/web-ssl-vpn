@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web SSL VPN — 代码讲解 PPT</title>
+<style>
+  @font-face { font-family:'Maple Mono'; src:local('Maple Mono NF CN'); }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system,'Segoe UI',sans-serif; background:#0d1117; color:#c9d1d9; counter-reset:slide; }
+  .slide { min-height:100vh; padding:56px 72px; display:flex; flex-direction:column; justify-content:center; border-bottom:1px solid #21262d; position:relative; }
+  .slide::before { counter-increment:slide; content:counter(slide); position:absolute; bottom:24px; right:32px; font-size:13px; color:#484f58; }
+  h1 { font-size:40px; color:#58a6ff; margin-bottom:12px; font-family:'Maple Mono',monospace; }
+  h2 { font-size:26px; color:#f0883e; margin-bottom:16px; font-family:'Maple Mono',monospace; }
+  .sub { font-size:18px; color:#8b949e; }
+  p, li { font-size:16px; line-height:1.9; }
+  ul { padding-left:24px; margin:12px 0; }
+  .code { margin-top:20px; border-radius:8px; overflow:hidden; border:1px solid #30363d; box-shadow:0 4px 24px rgba(0,0,0,.4); }
+  .code img { width:100%; display:block; }
+  .bl { display:inline-block; padding:2px 10px; border-radius:4px; font-size:12px; margin-right:6px; }
+  .b-rust { background:rgba(222,165,132,.2); color:#dea584; }
+  .b-zig  { background:rgba(247,168,0,.2);  color:#f7a800; }
+  .b-nix  { background:rgba(126,231,135,.2); color:#7ee787; }
+  .b-wasm { background:rgba(101,77,247,.2);  color:#654df7; }
+  .col2 { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:16px; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:20px; }
+  .card h3 { color:#58a6ff; margin-bottom:8px; font-family:'Maple Mono',monospace; }
+  .arrow { color:#f0883e; font-size:20px; margin:0 8px; }
+  .title-slide { align-items:center; text-align:center; }
+  .title-slide h1 { font-size:56px; }
+  .title-slide .sub { font-size:24px; }
+  a { color:#58a6ff; }
+</style>
+</head>
+<body>
+
+<!-- 封面 -->
+<div class="slide title-slide">
+  <h1>Web SSL VPN</h1>
+  <p class="sub">轻量级 Web 型 SSL VPN 网关</p>
+  <p class="sub" style="margin-top:8px;">
+    <span class="bl b-rust">Pingora 0.8</span>
+    <span class="bl b-wasm">Iced 0.14 WASM</span>
+    <span class="bl b-rust">eBPF + aya</span>
+    <span class="bl b-zig">Zig Build</span>
+    <span class="bl b-nix">Nix Flakes</span>
+  </p>
+  <p class="sub" style="margin-top:24px;font-size:14px;">goal.md 需求驱动实现 → 浏览器即客户端的安全接入</p>
+</div>
+
+<!-- 架构总览 -->
+<div class="slide">
+  <h2>🏗 架构</h2>
+  <p style="color:#8b949e;margin-bottom:8px;">用户请求 <span class="arrow">→</span> HTTPS 网关 <span class="arrow">→</span> 身份验证 <span class="arrow">→</span> RBAC <span class="arrow">→</span> 内网代理</p>
+  <div class="col2">
+    <div class="card">
+      <h3>📡 Pingora 代理引擎</h3>
+      <p>TLS 1.3 + HTTP/2 终止<br>ProxyHttp trait 实现<br>early_request_filter 路由分发<br>upstream_peer RBAC + 代理</p>
+    </div>
+    <div class="card">
+      <h3>🎨 Iced WASM 前端</h3>
+      <p>Rust → WebAssembly (Trunk)<br>TEA 模式: State/Message/Update/View<br>6 页仪表盘 + 实时 Tick<br>Catalog 样式系统</p>
+    </div>
+    <div class="card">
+      <h3>📊 eBPF 监控 (aya)</h3>
+      <p>TC classifier: ingress/egress<br>bpf-linker 编译为原生 ELF<br>BYTES_SENT/RECV + CONN_COUNT</p>
+    </div>
+    <div class="card">
+      <h3>🗄 SQLite + Sea-ORM</h3>
+      <p>5 张表: users/sessions/apps<br>user_app_permissions/audit_logs<br>21 单元测试覆盖</p>
+    </div>
+  </div>
+</div>
+
+<!-- 数据库 -->
+<div class="slide">
+  <h2>🗄 数据库模型 — Sea-ORM 2.0</h2>
+  <p>5 张核心表，<code>sqlite::memory:</code> 测试隔离，14 个单元测试</p>
+  <ul>
+    <li><b>users</b> — id/username/password_hash/role/created_at</li>
+    <li><b>sessions</b> — UUID v4 令牌，8h 过期自动清理</li>
+    <li><b>apps/user_app_permissions</b> — RBAC 应用级权限映射</li>
+    <li><b>audit_logs</b> — 登录/代理/拒绝操作记录</li>
+  </ul>
+  <div class="code"><img src="c1-database.png" alt="database"></div>
+</div>
+
+<!-- 后端框架 -->
+<div class="slide">
+  <h2>📡 后端框架 — Pingora ProxyHttp</h2>
+  <p>Cloudflare 开源的异步代理框架，实现核心反向代理逻辑</p>
+  <ul>
+    <li><b>early_request_filter</b> — 拦截 API 路径、静态文件、HTML 页面</li>
+    <li><b>upstream_peer</b> — 身份认证 → RBAC 检查 → 动态选择内网目标</li>
+    <li><b>fail_to_proxy</b> — 优雅处理 API/Page 路径（非真实错误）</li>
+  </ul>
+  <div class="code"><img src="c2-proxyhttp.png" alt="proxy"></div>
+</div>
+
+<!-- 认证 -->
+<div class="slide">
+  <h2>🔒 认证 — argon2 + UUID Session</h2>
+  <p>handle_login 完整流程：验证密码 → 创建会话 → 审计日志 → Set-Cookie</p>
+  <ul>
+    <li>argon2.verify_encoded() 密码哈希验证</li>
+    <li>Uuid::new_v4() 生成 128bit 随机会话令牌</li>
+    <li>HttpOnly + SameSite=Lax + Max-Age Cookie</li>
+    <li>create_audit_log 记录登录事件（成功/失败分开记录）</li>
+  </ul>
+  <div class="code"><img src="c3-auth.png" alt="auth"></div>
+</div>
+
+<!-- eBPF -->
+<div class="slide">
+  <h2>📊 eBPF 流量监控 — TC Classifier</h2>
+  <p>tc_ingress: 统计接收字节 + TCP 连接追踪 (SYN/FIN/RST)</p>
+  <ul>
+    <li>ctx.load 从网络包头读取 ether_type / tot_len / proto / flags</li>
+    <li>BYTES_RECV HashMap 累加 IP 包长度</li>
+    <li>CONN_COUNT Array: SYN 递增, FIN/RST 递减</li>
+  </ul>
+  <div class="code"><img src="c4-ebpf.png" alt="ebpf"></div>
+</div>
+
+<!-- 前端创新: Iced TEA -->
+<div class="slide">
+  <h2>🎨 前端创新 — Iced TEA 模式</h2>
+  <p>Rust 原生 GUI 编译为 WebAssembly，无需 JS 框架</p>
+  <ul>
+    <li><b>State</b> (WebSslVpn) — 6 页状态 + 实时计数 + 流量历史</li>
+    <li><b>Message</b> — SwitchPage/Tick/ToggleDemo/SetQuota…</li>
+    <li><b>Update</b> — Tick 每秒更新模拟流量数据</li>
+    <li><b>View</b> — 各页面独立渲染函数</li>
+  </ul>
+  <div class="code"><img src="c5-frontend.png" alt="frontend"></div>
+</div>
+
+<!-- 前端创新: Catalog -->
+<div class="slide">
+  <h2>🎨 前端创新 — Catalog 样式系统</h2>
+  <p>Sniffnet 风格的声明式主题体系</p>
+  <ul>
+    <li><b>StyleType</b> — 3 套预设 (Nord/Tokyo/Catppuccin) + Custom</li>
+    <li><b>ContainerType</b> — BorderedRound / Tooltip / Badge / Modal…</li>
+    <li><b>ButtonType</b> — Standard / TabActive / BorderedRound…</li>
+    <li><b>TextType</b> — Incoming / Outgoing / Danger / Dimmed / Custom…</li>
+    <li>实现 <code>iced::widget::Catalog</code> trait, 编译期样式解析</li>
+  </ul>
+  <div class="code"><img src="c6-styles.png" alt="styles"></div>
+</div>
+
+<!-- 构建系统 -->
+<div class="slide">
+  <h2>🔧 构建系统 — Zig + Nix</h2>
+  <p>声明式依赖图，一键构建全流程</p>
+  <ul>
+    <li><b>Zig build.zig</b> — 编排 12 个构建步骤的 DAG</li>
+    <li>certs → trust → trunk(WASM) → cargo build → ebpf-build → run</li>
+    <li><b>Nix flake.nix</b> — 可复现开发环境, 锁定所有依赖版本</li>
+  </ul>
+  <div class="code"><img src="c7-build.png" alt="build"></div>
+</div>
+
+<!-- 配置 -->
+<div class="slide">
+  <h2>⚙ 配置系统 — env 注入</h2>
+  <p>ServerConfig::from_env() 读取环境变量覆盖默认值</p>
+  <ul>
+    <li>VPN_HTTP_BIND / VPN_HTTPS_BIND — 监听地址</li>
+    <li>VPN_DB_PATH / VPN_SESSION_HOURS — 数据库 & 超时</li>
+    <li><b>VPN_DEMO</b> — 演示模式，跳过认证，数据清零</li>
+    <li><b>VPN_EBPF_IFACE</b> — eBPF 监控网卡 (默认 lo)</li>
+  </ul>
+  <div class="code"><img src="c8-config.png" alt="config"></div>
+</div>
+
+<!-- 调色板系统 -->
+<div class="slide">
+  <h2>🎨 Palette 配色系统</h2>
+  <p>三套预设 + 自定义扩展，PaletteExtension 计算 alpha/button/alert 色</p>
+  <div class="code"><img src="c14-palette.png" alt="palette"></div>
+</div>
+
+<!-- 状态收集器 -->
+<div class="slide">
+  <h2>📈 StatusCollector — 实时状态</h2>
+  <p>请求计数 / 字节累加 / 会话追踪, <code>get_stats()</code> 返回 SystemStats</p>
+  <ul>
+    <li>record_request 累加 bytes_sent/recv（不再丢弃参数）</li>
+    <li>add_session / remove_session 追踪活跃会话数</li>
+  </ul>
+  <div class="code"><img src="c9-status.png" alt="status"></div>
+</div>
+
+<!-- eBPF 加载器 -->
+<div class="slide">
+  <h2>📊 eBPF 加载器 — try/fallback 模式</h2>
+  <p>优雅降级：BPF 二进制加载失败时自动回退到 StatusCollector</p>
+  <ul>
+    <li>init_ebpf() 读取 bpf-linker 编译的 ELF → TC attach</li>
+    <li>失败时 <code>EbpfMonitor { ebpf: None }</code> → read_stats 返回零值</li>
+    <li>/api/status 中 eBPF 有数据时优先，否则用应用层计数</li>
+  </ul>
+  <div class="code"><img src="c10-ebpf-loader.png" alt="loader"></div>
+</div>
+
+<!-- RBAC -->
+<div class="slide">
+  <h2>🔐 RBAC 访问控制</h2>
+  <p>upstream_peer 中实现：admin 绕过，user 需显式权限</p>
+  <ul>
+    <li><b>verify_auth</b> — Cookie → session 查 DB → user 对象</li>
+    <li><b>admin</b> — 直接放行所有 /proxy/{id}/*</li>
+    <li><b>user</b> — user_has_app_permission 检查授权</li>
+    <li>无权限 → 403 + audit_log 记录</li>
+  </ul>
+  <div class="code"><img src="c12-rbac.png" alt="rbac"></div>
+</div>
+
+<!-- 种子数据 -->
+<div class="slide">
+  <h2>🌱 种子数据 — 开箱即用</h2>
+  <p>首次启动时自动创建 admin 用户 + 4 个默认应用</p>
+  <ul>
+    <li>admin / admin123 (argon2 哈希)</li>
+    <li>Internal Wiki / Mail Server / File Repository / HR Portal</li>
+    <li>admin 自动获得所有应用权限</li>
+  </ul>
+  <div class="code"><img src="c13-seed.png" alt="seed"></div>
+</div>
+
+<!-- 演示模式 -->
+<div class="slide">
+  <h2>🟡 演示模式 — VPN_DEMO=true</h2>
+  <p>handle_demo_login: 任意凭证自动创建会话, 演示时无需真实密码</p>
+  <ul>
+    <li>查找或创建 admin 用户</li>
+    <li>UUID 会话 + Set-Cookie</li>
+    <li>前端 "DEMO MODE" 横幅 + 退出时清零计数</li>
+  </ul>
+  <div class="code"><img src="c11-demo-login.png" alt="demo"></div>
+</div>
+
+<!-- eBPF Run -->
+<div class="slide">
+  <h2>🔧 eBPF-Run — sudo 提权运行</h2>
+  <p>编译无 sudo，仅运行时用 suid sudo 执行 ./target/debug/server</p>
+  <ul>
+    <li>搜索系统 suid sudo (/run/wrappers/bin/sudo 等)</li>
+    <li>已为 root 直接运行</li>
+    <li>sudo -n 检查缓存 → sudo -v 交互式输入密码</li>
+  </ul>
+  <div class="code"><img src="c15-ebpf-run.png" alt="ebpf-run"></div>
+</div>
+
+<!-- Nix Flake -->
+<div class="slide">
+  <h2>❄ Nix Flakes — 可复现环境</h2>
+  <p>锁定所有依赖版本：cargo/rustc/trunk/wasm-bindgen/zig/openssl/llvm</p>
+  <ul>
+    <li>nixpkgs.url = unstable — 始终最新工具链</li>
+    <li>shellHook 自动安装 nightly + rust-src</li>
+    <li>LIBCLANG_PATH + ZIG_CACHE_DIR 环境预设</li>
+  </ul>
+  <div class="code"><img src="c16-nix.png" alt="nix"></div>
+</div>
+
+<!-- Workspace -->
+<div class="slide">
+  <h2>📦 Cargo Workspace</h2>
+  <p>三个子 crate: server + web(WASM) + ebpf(BPF), 统一依赖版本管理</p>
+  <ul>
+    <li>Pingora 0.8 · Iced 0.14 · aya 0.13 · Sea-ORM 2.0-rc</li>
+    <li>release: opt-level=z + lto + codegen-units=1</li>
+  </ul>
+  <div class="code"><img src="c21-workspace.png" alt="workspace"></div>
+</div>
+
+<!-- Server deps -->
+<div class="slide">
+  <h2>📡 Server 依赖</h2>
+  <p>Pingora 代理全家桶 + Sea-ORM + aya + argon2 + uuid</p>
+  <div class="code"><img src="c20-server-deps.png" alt="server deps"></div>
+</div>
+
+<!-- bpf-linker -->
+<div class="slide">
+  <h2>🔗 bpf-linker 配置</h2>
+  <p>ebpf/.cargo/config.toml — 指定 bpf-linker 为 BPF 目标链接器</p>
+  <ul>
+    <li>target = bpfel-unknown-none — 默认目标</li>
+    <li>linker = bpf-linker — 产生原生 BPF ELF（非位码）</li>
+  </ul>
+  <div class="code"><img src="c17-bpf-linker.png" alt="bpf-linker"></div>
+</div>
+
+<!-- Login HTML -->
+<div class="slide">
+  <h2>🔐 登录页 — 暗色主题 HTML</h2>
+  <p>CSS backdrop-filter 毛玻璃效果, fetch /api/auth/login</p>
+  <div class="code"><img src="c18-login.png" alt="login"></div>
+</div>
+
+<!-- Trunk -->
+<div class="slide">
+  <h2>📦 Trunk.toml — WASM 打包</h2>
+  <p>Trunk bundler 配置: dist 目录 + wasm-bindgen 路径</p>
+  <div class="code"><img src="c19-trunk.png" alt="trunk"></div>
+</div>
+
+<!-- Demo toggle -->
+<div class="slide">
+  <h2>🟡 前端演示切换</h2>
+  <p>ToggleDemo → 切换 demo_mode + 退出时清零所有计数器</p>
+  <ul>
+    <li>demo_mode 控制 "DEMO" 徽章 + 横幅显示</li>
+    <li>退出演示: uptime/requests/conns/bytes 全部归零</li>
+    <li>sent_history/recv_history 流量图表清空</li>
+  </ul>
+  <div class="code"><img src="c22-demo-toggle.png" alt="demo-toggle"></div>
+</div>
+
+<!-- Palette Extension -->
+<div class="slide">
+  <h2>🎨 PaletteExtension — 色彩计算</h2>
+  <p>从 Palette 推导 alpha/chart/button/alert 色, 支持暗色模式检测</p>
+  <div class="code"><img src="c23-palette-ext.png" alt="palette-ext"></div>
+</div>
+
+<!-- Egress -->
+<div class="slide">
+  <h2>📊 eBPF — tc_egress 发送统计</h2>
+  <p>出站方向: 统计 IPv4 包长累加到 BYTES_SENT HashMap</p>
+  <div class="code"><img src="c24-egress.png" alt="egress"></div>
+</div>
+
+<!-- Static Serve -->
+<div class="slide">
+  <h2>📂 静态文件服务 + MIME 路由</h2>
+  <p>load_static_files 预加载 dist/ 到 HashMap, get_mime 根据后缀匹配类型</p>
+  <ul>
+    <li>.html → text/html · .js → application/javascript · .wasm → application/wasm</li>
+  </ul>
+  <div class="code"><img src="c29-static-serve.png" alt="static"></div>
+</div>
+
+<!-- Audit demo fallback -->
+<div class="slide">
+  <h2>📋 审计日志 — 演示回退</h2>
+  <p>demo 模式下 DB 为空时返回 5 条模拟日志 (json!)</p>
+  <div class="code"><img src="c27-audit-demo.png" alt="audit"></div>
+</div>
+
+<!-- eBPF View -->
+<div class="slide">
+  <h2>🖥 eBPF 标签页视图</h2>
+  <p>Iced 实现的 bpftop 风格界面: 状态指示器 + 实时卡片 + Maps/Programs 表</p>
+  <div class="code"><img src="c25-ebpf-view.png" alt="ebpf-view"></div>
+</div>
+
+<!-- Bars chart -->
+<div class="slide">
+  <h2>📊 流量柱状图 — bars() 渲染</h2>
+  <p>60 点 sent/recv 历史 → 双色柱状图 (Iced Container.SolidColor)</p>
+  <div class="code"><img src="c26-bars.png" alt="bars"></div>
+</div>
+
+<!-- Unit test -->
+<div class="slide">
+  <h2>🧪 单元测试 — sqlite::memory:</h2>
+  <p>14 个 DB 测试: CRUD / 权限 / 种子数据 / 会话过期, 全内存隔离</p>
+  <div class="code"><img src="c28-test.png" alt="test"></div>
+</div>
+
+<!-- Release build -->
+<div class="slide">
+  <h2>🚀 Release 构建</h2>
+  <p>trunk --release + cargo build --release, zig 编排依赖链</p>
+  <div class="code"><img src="c30-release.png" alt="release"></div>
+</div>
+
+<!-- 总结 -->
+<div class="slide title-slide">
+  <h1>✅ 完成清单</h1>
+  <p class="sub" style="line-height:2.5;margin-top:24px;">
+    HTTPS 门户 · 反向代理 · RBAC · 审计日志<br>
+    Iced WASM 六页仪表盘 · 实时流量图 · 配额管理<br>
+    eBPF TC 监控 · bpf-linker 编译 · 演示模式<br>
+    Zig + Nix 一键构建 · 21 单元测试 · 三套主题
+  </p>
+  <p class="sub" style="margin-top:36px;">
+    <a href="../../README.md">README.md</a> ·
+    <a href="../../goal.md">goal.md</a> ·
+    <a href="../">UI 截图</a>
+  </p>
+</div>
+
+</body>
+</html>

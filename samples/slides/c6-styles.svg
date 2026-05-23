@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="361.79" height="235.93" xmlns="http://www.w3.org/2000/svg">
+<rect width="361.79" height="235.93" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="13.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="50.60px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">mod</tspan> <tspan fill="#8fbcbb">button</tspan><tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="66.20px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">mod</tspan> <tspan fill="#8fbcbb">container</tspan><tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="81.80px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">mod</tspan> <tspan fill="#8fbcbb">text</tspan><tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="97.40px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">mod</tspan> <tspan fill="#8fbcbb">scrollbar</tspan><tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="113.00px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">mod</tspan> <tspan fill="#8fbcbb">types</tspan><tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="128.60px" xml:space="preserve">
+</text><text x="20.00px" y="144.20px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">use</tspan> types::style_type::StyleType<tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="159.80px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">use</tspan> container::ContainerType<tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="175.40px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">use</tspan> button::ButtonType<tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="191.00px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">use</tspan> text::TextType<tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="206.60px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">pub</tspan> <tspan fill="#81a1c1" font-weight="bold">use</tspan> text::highlight <tspan fill="#81a1c1" font-weight="bold">as</tspan> text_color<tspan fill="#eceff4">;</tspan>
+</text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

@@ -4,13 +4,11 @@
 use aya_ebpf::{
     bindings::TC_ACT_OK,
     macros::{classifier, map},
-    maps::{HashMap, Array},
+    maps::{Array, HashMap},
     programs::TcContext,
 };
-use network_types::{
-    eth::EtherType,
-    ip::IpProto,
-};
+use network_types::eth::EtherType;
+use network_types::ip::IpProto;
 
 #[map]
 static BYTES_SENT: HashMap<u32, u64> = HashMap::with_max_entries(1, 0);
@@ -34,27 +32,19 @@ const TCP_SYN: u8 = 0x02;
 const TCP_RST: u8 = 0x04;
 const TCP_ACK: u8 = 0x10;
 
-fn read_u16_at(ctx: &TcContext, offset: usize) -> Result<u16, i64> {
-    let bytes: [u8; 2] = ctx.load(offset)?;
-    Ok(u16::from_be_bytes(bytes))
-}
-
-fn read_u8_at(ctx: &TcContext, offset: usize) -> Result<u8, i64> {
-    let byte: u8 = ctx.load(offset)?;
-    Ok(byte)
-}
-
 #[classifier]
 pub fn tc_ingress(ctx: TcContext) -> i32 {
-    let Ok(ether_type) = read_u16_at(&ctx, ETH_HDR_LEN + ETHER_TYPE_OFF) else {
-        return TC_ACT_OK;
+    let ether_type: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + ETHER_TYPE_OFF) } {
+        Ok(v) => u16::from_be(v),
+        Err(_) => return TC_ACT_OK,
     };
     if ether_type != EtherType::Ipv4 as u16 {
         return TC_ACT_OK;
     }
 
-    let Ok(tot_len) = read_u16_at(&ctx, ETH_HDR_LEN + IP_LEN_OFF) else {
-        return TC_ACT_OK;
+    let tot_len: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + IP_LEN_OFF) } {
+        Ok(v) => u16::from_be(v),
+        Err(_) => return TC_ACT_OK,
     };
     let ip_len = tot_len as u64;
 
@@ -62,13 +52,15 @@ pub fn tc_ingress(ctx: TcContext) -> i32 {
         unsafe { *val = (*val).wrapping_add(ip_len) };
     }
 
-    let Ok(proto) = read_u8_at(&ctx, ETH_HDR_LEN + IP_PROTO_OFF) else {
-        return TC_ACT_OK;
+    let proto: u8 = match unsafe { ctx.load::<u8>(ETH_HDR_LEN + IP_PROTO_OFF) } {
+        Ok(v) => v,
+        Err(_) => return TC_ACT_OK,
     };
     if proto == IpProto::Tcp as u8 {
         let flags_off = ETH_HDR_LEN + IPV4_HDR_LEN + TCP_HDR_OFF_FLAGS;
-        let Ok(flags_byte) = read_u8_at(&ctx, flags_off + 1) else {
-            return TC_ACT_OK;
+        let flags_byte: u8 = match unsafe { ctx.load::<u8>(flags_off + 1) } {
+            Ok(v) => v,
+            Err(_) => return TC_ACT_OK,
         };
 
         if (flags_byte & TCP_SYN) != 0 && (flags_byte & TCP_ACK) == 0 {
@@ -88,15 +80,17 @@ pub fn tc_ingress(ctx: TcContext) -> i32 {
 
 #[classifier]
 pub fn tc_egress(ctx: TcContext) -> i32 {
-    let Ok(ether_type) = read_u16_at(&ctx, ETH_HDR_LEN + ETHER_TYPE_OFF) else {
-        return TC_ACT_OK;
+    let ether_type: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + ETHER_TYPE_OFF) } {
+        Ok(v) => u16::from_be(v),
+        Err(_) => return TC_ACT_OK,
     };
     if ether_type != EtherType::Ipv4 as u16 {
         return TC_ACT_OK;
     }
 
-    let Ok(tot_len) = read_u16_at(&ctx, ETH_HDR_LEN + IP_LEN_OFF) else {
-        return TC_ACT_OK;
+    let tot_len: u16 = match unsafe { ctx.load::<u16>(ETH_HDR_LEN + IP_LEN_OFF) } {
+        Ok(v) => u16::from_be(v),
+        Err(_) => return TC_ACT_OK,
     };
     let ip_len = tot_len as u64;
 

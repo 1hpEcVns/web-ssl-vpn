@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="738.57" height="322.00" xmlns="http://www.w3.org/2000/svg">
+<rect width="738.57" height="322.00" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="12.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="49.40px" xml:space="preserve"><tspan fill="#5e81ac" font-style="italic">#[cfg(test)]</tspan>
+</text><text x="20.00px" y="63.80px" xml:space="preserve"><tspan fill="#81a1c1" font-weight="bold">mod</tspan> <tspan fill="#8fbcbb">tests</tspan> <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="78.20px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">use</tspan> <tspan fill="#81a1c1" font-weight="bold">super</tspan>::<tspan fill="#81a1c1">*</tspan><tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="92.60px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">use</tspan> sea_orm::Database<tspan fill="#eceff4">;</tspan>
+</text><text x="20.00px" y="107.00px" xml:space="preserve">
+</text><text x="20.00px" y="121.40px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">async</tspan> <tspan fill="#81a1c1" font-weight="bold">fn</tspan> <tspan fill="#88c0d0">setup_db</tspan><tspan fill="#eceff4">()</tspan> -&gt; <tspan fill="#8fbcbb">DatabaseConnection</tspan> <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="135.80px" xml:space="preserve">        <tspan fill="#81a1c1" font-weight="bold">let</tspan> db <tspan fill="#81a1c1">=</tspan> Database::connect<tspan fill="#eceff4">(</tspan><tspan fill="#a3be8c">&quot;sqlite::memory:&quot;</tspan><tspan fill="#eceff4">).</tspan><tspan fill="#81a1c1" font-weight="bold">await</tspan><tspan fill="#eceff4">.</tspan>unwrap<tspan fill="#eceff4">();</tspan>
+</text><text x="20.00px" y="150.20px" xml:space="preserve">        create_tables<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>db<tspan fill="#eceff4">).</tspan><tspan fill="#81a1c1" font-weight="bold">await</tspan><tspan fill="#eceff4">.</tspan>unwrap<tspan fill="#eceff4">();</tspan>
+</text><text x="20.00px" y="164.60px" xml:space="preserve">        db
+</text><text x="20.00px" y="179.00px" xml:space="preserve">    <tspan fill="#eceff4">}</tspan>
+</text><text x="20.00px" y="193.40px" xml:space="preserve">
+</text><text x="20.00px" y="207.80px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">fn</tspan> <tspan fill="#88c0d0">hash_password</tspan><tspan fill="#eceff4">(</tspan>pw: <tspan fill="#81a1c1">&amp;</tspan><tspan fill="#81a1c1">str</tspan><tspan fill="#eceff4">)</tspan> -&gt; <tspan fill="#81a1c1">String</tspan> <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="222.20px" xml:space="preserve">        argon2::hash_encoded<tspan fill="#eceff4">(</tspan>pw<tspan fill="#eceff4">.</tspan>as_bytes<tspan fill="#eceff4">(),</tspan> <tspan fill="#a3be8c">b</tspan><tspan fill="#a3be8c">&quot;test-salt&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#81a1c1">&amp;</tspan>argon2::Config::default<tspan fill="#eceff4">()).</tspan>unwrap<tspan fill="#eceff4">()</tspan>
+</text><text x="20.00px" y="236.60px" xml:space="preserve">    <tspan fill="#eceff4">}</tspan>
+</text><text x="20.00px" y="251.00px" xml:space="preserve">
+</text><text x="20.00px" y="265.40px" xml:space="preserve">    <tspan fill="#5e81ac" font-style="italic">#[tokio::test]</tspan>
+</text><text x="20.00px" y="279.80px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">async</tspan> <tspan fill="#81a1c1" font-weight="bold">fn</tspan> <tspan fill="#88c0d0">test_create_and_find_user</tspan><tspan fill="#eceff4">()</tspan> <tspan fill="#eceff4">{</tspan>
+</text><text x="20.00px" y="294.20px" xml:space="preserve">        <tspan fill="#81a1c1" font-weight="bold">let</tspan> db <tspan fill="#81a1c1">=</tspan> setup_db<tspan fill="#eceff4">().</tspan><tspan fill="#81a1c1" font-weight="bold">await</tspan><tspan fill="#eceff4">;</tspan></text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

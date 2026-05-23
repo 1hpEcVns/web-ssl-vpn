@@ -12,6 +12,8 @@ pub struct ServerConfig {
     pub static_dir: PathBuf,
     pub session_hours: i64,
     pub log_level: String,
+    pub demo: bool,
+    pub ebpf_iface: String,
 }
 
 impl Default for ServerConfig {
@@ -26,6 +28,8 @@ impl Default for ServerConfig {
             static_dir: PathBuf::from("web/dist"),
             session_hours: 8,
             log_level: "info".into(),
+            demo: false,
+            ebpf_iface: "lo".into(),
         }
     }
 }
@@ -45,6 +49,10 @@ impl ServerConfig {
             if let Ok(h) = v.parse::<i64>() { cfg.session_hours = h; }
         }
         if let Ok(v) = env::var("VPN_LOG_LEVEL") { cfg.log_level = v; }
+        if let Ok(v) = env::var("VPN_DEMO") {
+            cfg.demo = matches!(v.as_str(), "1" | "true" | "yes");
+        }
+        if let Ok(v) = env::var("VPN_EBPF_IFACE") { cfg.ebpf_iface = v; }
 
         cfg
     }
@@ -60,6 +68,8 @@ impl ServerConfig {
         log::info!("DB path:         {}", self.db_path.display());
         log::info!("Static dir:      {}", self.static_dir.display());
         log::info!("Session timeout: {} hours", self.session_hours);
+        log::info!("eBPF interface:  {}", self.ebpf_iface);
+        if self.demo { log::warn!("*** DEMO MODE ENABLED - Authentication bypassed, data is simulated ***"); }
     }
 }
 

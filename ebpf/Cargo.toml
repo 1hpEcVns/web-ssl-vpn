@@ -3,8 +3,9 @@ name = "ebpf"
 version.workspace = true
 edition.workspace = true
 
-[lib]
-crate-type = ["lib"]
+[[bin]]
+name = "ebpf"
+path = "src/lib.rs"
 
 [dependencies]
 aya-ebpf = "0.1"
@@ -12,3 +13,6 @@ aya-ebpf-bindings = "0.1"
 aya-ebpf-macros = "0.1"
 
 network-types = "0.0.5"
+
+[build-dependencies]
+bpf-linker = "0.9"

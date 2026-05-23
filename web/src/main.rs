@@ -2,7 +2,7 @@ mod styles;
 
 use iced::{
     widget::{button, column, container, row, scrollable, text, Space},
-    Element, Length, Padding, Task,
+    Element, Length, Task,
     alignment, Font, time,
 };
 use styles::{ContainerType, ButtonType, TextType, StyleType};
@@ -16,17 +16,17 @@ fn main() -> iced::Result {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Page { Overview, Network, Sessions, Apps, Audit }
+enum Page { Overview, Network, Sessions, Apps, Audit, Ebpf }
 
 impl Page {
-    const ALL: [Page; 5] = [Page::Overview, Page::Network, Page::Sessions, Page::Apps, Page::Audit];
+    const ALL: [Page; 6] = [Page::Overview, Page::Network, Page::Sessions, Page::Apps, Page::Audit, Page::Ebpf];
     fn label(&self) -> &str {
-        match self { Page::Overview => "Overview", Page::Network => "Network", Page::Sessions => "Sessions", Page::Apps => "Apps", Page::Audit => "Audit" }
+        match self { Page::Overview => "Overview", Page::Network => "Network", Page::Sessions => "Sessions", Page::Apps => "Apps", Page::Audit => "Audit", Page::Ebpf => "eBPF" }
     }
 }
 
 #[derive(Debug, Clone)]
-enum Message { SwitchPage(Page), Tick, ToggleSessionTab, ToggleSessionColumns, ExportLogs, SetQuota(u64), EditQuota }
+enum Message { SwitchPage(Page), Tick, ToggleSessionTab, ToggleSessionColumns, ExportLogs, SetQuota(u64), EditQuota, ToggleDemo }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionTab { Active, Closed }
@@ -37,6 +37,8 @@ struct WebSslVpn {
     show_session_cols: bool,
     traffic_quota: u64,
     editing_quota: bool,
+    demo_mode: bool,
+    ebpf_active: bool,
     uptime: u64,
     requests: u64,
     conns: u64,
@@ -75,6 +77,18 @@ impl WebSslVpn {
             Message::ExportLogs => {}
             Message::EditQuota => { self.editing_quota = !self.editing_quota; }
             Message::SetQuota(val) => { self.traffic_quota = val; self.editing_quota = false; }
+            Message::ToggleDemo => {
+                self.demo_mode = !self.demo_mode;
+                if !self.demo_mode {
+                    self.uptime = 0;
+                    self.requests = 0;
+                    self.conns = 0;
+                    self.bytes_sent = 0;
+                    self.bytes_recv = 0;
+                    self.sent_history.clear();
+                    self.recv_history.clear();
+                }
+            }
             Message::Tick => {
                 self.uptime += 1;
                 if self.uptime % 3 == 0 {
@@ -92,13 +106,41 @@ impl WebSslVpn {
     }
 
     fn view(&self) -> Element<'_, Message, StyleType> {
+        let demo_icon: Element<'_, Message, StyleType> = if self.demo_mode {
+            row![
+                container(text("DEMO").size(10)).padding([2, 6])
+                    .class(ContainerType::Tooltip),
+                button(text("X").size(10)).on_press(Message::ToggleDemo).padding([2, 4])
+                    .class(ButtonType::BorderedRound),
+            ].align_y(alignment::Vertical::Center).spacing(4).into()
+        } else {
+            Space::new().width(Length::Shrink).into()
+        };
+
         let hdr = container(
             row![
                 text("Web SSL VPN").font(Font::MONOSPACE).size(16).class(TextType::Incoming),
                 Space::new().width(Length::Fill),
+                demo_icon,
+                Space::new().width(8),
                 text(format!("Uptime {}s", self.uptime)).size(12).class(TextType::Dimmed),
             ].align_y(alignment::Vertical::Center)
         ).padding([12, 24]).class(ContainerType::BorderedRound);
+
+        let demo_banner: Element<'_, Message, StyleType> = if self.demo_mode {
+            container(
+                row![
+                    text("DEMO MODE").size(12).class(TextType::Incoming),
+                    Space::new().width(8),
+                    text("Data is simulated").size(11).class(TextType::Dimmed),
+                    Space::new().width(Length::Fill),
+                    button(text("Exit Demo").size(11)).on_press(Message::ToggleDemo).padding([3, 10])
+                        .class(ButtonType::Standard),
+                ].align_y(alignment::Vertical::Center)
+            ).padding([6, 24]).class(ContainerType::BorderedRound).into()
+        } else {
+            Space::new().height(0).into()
+        };
 
         let tabs = row(
             Page::ALL.iter().map(|p| {
@@ -114,6 +156,7 @@ impl WebSslVpn {
             Page::Sessions => self.view_sessions(),
             Page::Apps => self.view_apps(),
             Page::Audit => self.view_audit(),
+            Page::Ebpf => self.view_ebpf(),
         };
 
         let footer = container(
@@ -124,7 +167,7 @@ impl WebSslVpn {
             ]
         ).padding([8, 24]).class(ContainerType::BorderedRound);
 
-        column![hdr, tabs, container(body).height(Length::Fill), footer].into()
+        column![hdr, demo_banner, tabs, container(body).height(Length::Fill), footer].into()
     }
 
     fn view_overview(&self) -> Element<'_, Message, StyleType> {
@@ -147,8 +190,9 @@ impl WebSslVpn {
     fn view_network(&self) -> Element<'_, Message, StyleType> {
         let p = StyleType::NordDark.get_palette();
         let q = self.traffic_quota;
-        let sp = ((self.bytes_sent as f64 / q as f64) * 100.0).min(100.0) as f32;
-        let rp = ((self.bytes_recv as f64 / q as f64) * 100.0).min(100.0) as f32;
+        let unlimited = q == u64::MAX;
+        let sp = if unlimited { 0.0 } else { ((self.bytes_sent as f64 / q as f64) * 100.0).min(100.0) as f32 };
+        let rp = if unlimited { 0.0 } else { ((self.bytes_recv as f64 / q as f64) * 100.0).min(100.0) as f32 };
 
         let qrow = {
             let r: Element<'_, Message, StyleType> = if self.editing_quota {
@@ -166,7 +210,7 @@ impl WebSslVpn {
 
         container(scrollable(column![
             qrow, Space::new().height(8),
-            row![fcol("Upload", self.bytes_sent, sp, p.secondary), Space::new().width(8), fcol("Download", self.bytes_recv, rp, p.outgoing)],
+            row![fcol("Upload", self.bytes_sent, sp, p.secondary, unlimited), Space::new().width(8), fcol("Download", self.bytes_recv, rp, p.outgoing, unlimited)],
         ]).height(Length::Fill)).padding(24).height(Length::Fill).into()
     }
 
@@ -215,12 +259,44 @@ impl WebSslVpn {
         }).collect();
         container(column![top, Space::new().height(8), container(hdr).padding([4,8]), scrollable(column(rows).spacing(4)).height(Length::Fill)]).padding(24).height(Length::Fill).into()
     }
+
+    fn view_ebpf(&self) -> Element<'_, Message, StyleType> {
+        let p = StyleType::NordDark.get_palette();
+        let (sc, sl) = if self.ebpf_active { (p.outgoing, "ACTIVE") } else { (p.starred, "FALLBACK") };
+        container(scrollable(column![
+            container(row![
+                text("eBPF Monitor").size(14).class(TextType::Subtitle), Space::new().width(Length::Fill),
+                container(row![d(sc), Space::new().width(6), text(sl).size(11).class(TextType::Custom(sc))])
+                    .padding([2, 10]).class(ContainerType::BorderedRound),
+            ].align_y(alignment::Vertical::Center)),
+            Space::new().height(12),
+            row![
+                stat("Bytes Sent", &fmt_bytes(self.bytes_sent), p.secondary),
+                Space::new().width(8),
+                stat("Bytes Recv", &fmt_bytes(self.bytes_recv), p.outgoing),
+                Space::new().width(8),
+                stat("Connections", &fmt_n(self.conns), p.starred),
+            ].spacing(0),
+            Space::new().height(16),
+            container(column![
+                text("BPF Maps").size(12).class(TextType::Subtitle),
+                Space::new().height(6),
+                bpftable(&[("BYTES_SENT", "Hash", "4096 B"), ("BYTES_RECV", "Hash", "8192 B"), ("CONN_COUNT", "Array", "12")]),
+            ]).padding(14).class(ContainerType::BorderedRound),
+            Space::new().height(12),
+            container(column![
+                text("BPF Programs").size(12).class(TextType::Subtitle),
+                Space::new().height(6),
+                bpftable(&[("tc_ingress", "SchedClassifier", "Attached"), ("tc_egress", "SchedClassifier", "Attached")]),
+            ]).padding(14).class(ContainerType::BorderedRound),
+        ]).height(Length::Fill)).padding(24).height(Length::Fill).into()
+    }
 }
 
 impl Default for WebSslVpn {
     fn default() -> Self { Self {
         page: Page::Overview, session_tab: SessionTab::Active, show_session_cols: false,
-        traffic_quota: 1_073_741_824, editing_quota: false,
+        traffic_quota: 1_073_741_824, editing_quota: false, demo_mode: true, ebpf_active: true,
         uptime: 0, requests: 0, conns: 0, bytes_sent: 0, bytes_recv: 0,
         sent_history: Vec::new(), recv_history: Vec::new(),
         active_sessions: vec![
@@ -245,9 +321,10 @@ fn stat(label: &str, val: &str, c: iced::Color) -> Element<'static, Message, Sty
     container(column![text(l).size(10).class(TextType::Dimmed), Space::new().height(4), text(v).size(24).class(TextType::Custom(c))])
         .padding(16).width(Length::Fill).class(ContainerType::BorderedRound).into()
 }
-fn fcol(dir: &str, bytes: u64, pct: f32, c: iced::Color) -> Element<'static, Message, StyleType> {
+fn fcol(dir: &str, bytes: u64, pct: f32, c: iced::Color, unlimited: bool) -> Element<'static, Message, StyleType> {
     let d = dir.to_string();
-    container(column![text(d).size(14).class(TextType::Subtitle), Space::new().height(8), text(fmt_bytes(bytes)).size(24).class(TextType::Custom(c)), Space::new().height(4), qbar(pct, c), Space::new().height(4), text(format!("{:.1}%", pct)).size(10).class(TextType::Dimmed)])
+    let pct_text = if unlimited { "--".into() } else { format!("{:.1}%", pct) };
+    container(column![text(d).size(14).class(TextType::Subtitle), Space::new().height(8), text(fmt_bytes(bytes)).size(24).class(TextType::Custom(c)), Space::new().height(4), qbar(pct, c, unlimited), Space::new().height(4), text(pct_text).size(10).class(TextType::Dimmed)])
         .padding(16).width(Length::FillPortion(1)).class(ContainerType::BorderedRound).into()
 }
 fn btn(label: &str, n: usize, a: bool) -> Element<'static, Message, StyleType> {
@@ -258,7 +335,12 @@ fn pbtn(label: &str, q: u64) -> Element<'static, Message, StyleType> {
 }
 fn h(l: &str, w: u16) -> Element<'static, Message, StyleType> { text(l.to_string()).size(10).class(TextType::Dimmed).width(Length::FillPortion(w)).into() }
 fn v(s: &str, w: u16, k: TextType) -> Element<'static, Message, StyleType> { text(s.to_string()).size(11).class(k).width(Length::FillPortion(w)).into() }
-fn qbar(pct: f32, c: iced::Color) -> Element<'static, Message, StyleType> {
+fn qbar(pct: f32, c: iced::Color, unlimited: bool) -> Element<'static, Message, StyleType> {
+    if unlimited {
+        return container(row![
+            container(Space::new().height(4)).width(Length::Fill).class(ContainerType::SolidColor(c)),
+        ]).into();
+    }
     let p = pct.clamp(0.0, 100.0);
     container(row![container(Space::new().width(1).height(4)).width(Length::FillPortion((p*100.0) as u16)).class(ContainerType::SolidColor(c)), container(Space::new().width(1).height(4)).width(Length::FillPortion(((100.0-p)*100.0).max(1.0) as u16)).class(ContainerType::SolidColor(iced::Color{a:0.08,..c}))]).into()
 }
@@ -287,9 +369,26 @@ fn bars(sent: &[f32], recv: &[f32]) -> Element<'static, Message, StyleType> {
     ]).into()
 }
 fn d(c: iced::Color) -> Element<'static, Message, StyleType> { container(Space::new().width(8).height(8)).class(ContainerType::SolidColor(c)).into() }
+fn bpftable<'a>(rows: &[(&'a str, &'a str, &'a str)]) -> Element<'a, Message, StyleType> {
+    let hdr = row![
+        text("Name").size(10).class(TextType::Dimmed).width(Length::FillPortion(3)),
+        text("Type").size(10).class(TextType::Dimmed).width(Length::FillPortion(3)),
+        text("Value / Status").size(10).class(TextType::Dimmed).width(Length::FillPortion(2)),
+    ].spacing(4);
+    let body: Vec<Element<'a, Message, StyleType>> = rows.iter().map(|(n, t, v)| {
+        let vc = if *v == "Attached" { TextType::Outgoing } else { TextType::Incoming };
+        container(row![
+            text(*n).size(11).class(TextType::Standard).width(Length::FillPortion(3)),
+            text(*t).size(11).class(TextType::Dimmed).width(Length::FillPortion(3)),
+            text(*v).size(11).class(vc).width(Length::FillPortion(2)),
+        ].spacing(4)).padding([2, 0]).into()
+    }).collect();
+    column![hdr, Space::new().height(4), column(body).spacing(2)].into()
+}
 fn fmt_n(n: u64) -> String { n.to_string() }
 fn fmt_t(s: u64) -> String { format!("{}m {}s", s/60, s%60) }
 fn fmt_bytes(b: u64) -> String {
+    if b == u64::MAX { return "Unlimited".into(); }
     if b>=1_073_741_824 { format!("{:.2} GB", b as f64/1_073_741_824.0) }
     else if b>=1_048_576 { format!("{:.2} MB", b as f64/1_048_576.0) }
     else if b>=1024 { format!("{:.2} KB", b as f64/1024.0) }

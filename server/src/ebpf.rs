@@ -18,7 +18,7 @@ impl EbpfMonitor {
                 EbpfMonitor { ebpf: Some(ebpf) }
             }
             Err(e) => {
-                log::warn!("eBPF attach failed ({:#}): using fallback counters", e);
+                log::warn!("eBPF not available ({:#}): using StatusCollector counters", e);
                 EbpfMonitor { ebpf: None }
             }
         }

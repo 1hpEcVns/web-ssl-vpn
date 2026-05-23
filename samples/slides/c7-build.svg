@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="717.74" height="283.29" xmlns="http://www.w3.org/2000/svg">
+<rect width="717.74" height="283.29" fill="#2e3440" rx="8.00" ry="8.00" x="0.00px" y="0.00px"/>
+<g font-family="Maple Mono NF CN" font-size="13.00px" fill="#d8dee9" clip-path="url(#terminalMask)">
+<text x="20.00px" y="50.60px" xml:space="preserve">    <tspan fill="#616e87" font-style="italic">// ── Trunk (debug) ─────────────────────────────────
+</tspan></text><text x="20.00px" y="66.20px" xml:space="preserve"><tspan fill="#616e87" font-style="italic"/>
+</text><text x="20.00px" y="81.80px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">const</tspan> trunk_cmd <tspan fill="#81a1c1">=</tspan> b<tspan fill="#eceff4">.</tspan>addSystemCommand<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan><tspan fill="#eceff4">.{</tspan> <tspan fill="#a3be8c">&quot;trunk&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;build&quot;</tspan> <tspan fill="#eceff4">});</tspan>
+</text><text x="20.00px" y="97.40px" xml:space="preserve">    trunk_cmd<tspan fill="#eceff4">.</tspan>setCwd<tspan fill="#eceff4">(.{</tspan> <tspan fill="#eceff4">.</tspan>cwd_relative <tspan fill="#81a1c1">=</tspan> <tspan fill="#a3be8c">&quot;web&quot;</tspan> <tspan fill="#eceff4">});</tspan>
+</text><text x="20.00px" y="113.00px" xml:space="preserve">
+</text><text x="20.00px" y="128.60px" xml:space="preserve">    trunk_step<tspan fill="#eceff4">.</tspan>dependOn<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>trunk_cmd<tspan fill="#eceff4">.</tspan>step<tspan fill="#eceff4">);</tspan>
+</text><text x="20.00px" y="144.20px" xml:space="preserve">    wasm_step<tspan fill="#eceff4">.</tspan>dependOn<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>rm_csr<tspan fill="#eceff4">.</tspan>step<tspan fill="#eceff4">);</tspan>
+</text><text x="20.00px" y="159.80px" xml:space="preserve">    wasm_step<tspan fill="#eceff4">.</tspan>dependOn<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>gen_bundle<tspan fill="#eceff4">.</tspan>step<tspan fill="#eceff4">);</tspan>
+</text><text x="20.00px" y="175.40px" xml:space="preserve">    wasm_step<tspan fill="#eceff4">.</tspan>dependOn<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan>trunk_cmd<tspan fill="#eceff4">.</tspan>step<tspan fill="#eceff4">);</tspan>
+</text><text x="20.00px" y="191.00px" xml:space="preserve">
+</text><text x="20.00px" y="206.60px" xml:space="preserve">    <tspan fill="#616e87" font-style="italic">// ── Check ─────────────────────────────────────────
+</tspan></text><text x="20.00px" y="222.20px" xml:space="preserve"><tspan fill="#616e87" font-style="italic"/>
+</text><text x="20.00px" y="237.80px" xml:space="preserve">    <tspan fill="#81a1c1" font-weight="bold">const</tspan> check_server <tspan fill="#81a1c1">=</tspan> b<tspan fill="#eceff4">.</tspan>addSystemCommand<tspan fill="#eceff4">(</tspan><tspan fill="#81a1c1">&amp;</tspan><tspan fill="#eceff4">.{</tspan> <tspan fill="#a3be8c">&quot;cargo&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;check&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;-p&quot;</tspan><tspan fill="#eceff4">,</tspan> <tspan fill="#a3be8c">&quot;server&quot;</tspan> <tspan fill="#eceff4">});</tspan>
+</text><text x="20.00px" y="253.40px" xml:space="preserve">    check_server<tspan fill="#eceff4">.</tspan>setCwd<tspan fill="#eceff4">(.{</tspan> <tspan fill="#eceff4">.</tspan>cwd_relative <tspan fill="#81a1c1">=</tspan> <tspan fill="#a3be8c">&quot;.&quot;</tspan> <tspan fill="#eceff4">});</tspan></text>
+</g>
+<svg x="0.00px" y="0.00px"><circle cx="13.50" cy="12.00" r="5.50" fill="#FF5A54"/><circle cx="32.50" cy="12.00" r="5.50" fill="#E6BF29"/><circle cx="51.50" cy="12.00" r="5.50" fill="#52C12B"/></svg></svg>

@@ -48,8 +48,10 @@ impl StatusCollector {
         }
     }
 
-    pub fn record_request(&mut self, _session_id: &str, _sent: u64, _recv: u64) {
+    pub fn record_request(&mut self, _session_id: &str, sent: u64, recv: u64) {
         self.requests_count += 1;
+        self.bytes_sent = self.bytes_sent.wrapping_add(sent);
+        self.bytes_recv = self.bytes_recv.wrapping_add(recv);
     }
 
     #[allow(dead_code)]

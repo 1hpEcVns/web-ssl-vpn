@@ -38,6 +38,7 @@ struct App {
     static_files: HashMap<String, Vec<u8>>,
     dashboard_index: String,
     session_hours: i64,
+    demo: bool,
 }
 
 #[derive(Deserialize)]
@@ -200,6 +201,10 @@ async fn respond_html(session: &mut Session, html: String) {
 
 const LOGIN_HTML: &str = include_str!("../html/login.html");
 
+fn inject_demo_flag(html: &str) -> String {
+    html.replace("</head>", "<script>window.__VPN_DEMO__=true;</script></head>")
+}
+
 //// ProxyHttp
 
 #[async_trait]
@@ -241,8 +246,14 @@ impl ProxyHttp for App {
         let path = req.uri.path().to_string();
         let method = req.method.as_str().to_string();
 
+        let request_len: u64 = req.headers
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+
         let mut state = self.state.lock().await;
-        state.status.record_request("global", 0, 0);
+        state.status.record_request("global", 0, request_len);
 
         if path.starts_with("/api/") {
             drop(state);
@@ -253,10 +264,15 @@ impl ProxyHttp for App {
         }
 
         if path == "/" || path == "/index.html" {
-            let auth_user = verify_auth(&state, session).await;
+            let auth_user = if self.demo { None } else { verify_auth(&state, session).await };
             drop(state);
-            if auth_user.is_some() {
-                respond_html(session, self.dashboard_index.clone()).await;
+            if auth_user.is_some() || self.demo {
+                let html = if self.demo {
+                    inject_demo_flag(&self.dashboard_index)
+                } else {
+                    self.dashboard_index.clone()
+                };
+                respond_html(session, html).await;
             } else {
                 respond_html(session, LOGIN_HTML.to_string()).await;
             }
@@ -282,6 +298,12 @@ impl ProxyHttp for App {
         let source_ip = get_source_ip(session);
 
         let state = self.state.lock().await;
+
+        if self.demo {
+            drop(state);
+            return Ok(Box::new(HttpPeer::new("127.0.0.1:80".to_string(), false, "".to_string())));
+        }
+
         let user = match verify_auth(&state, session).await {
             Some(u) => u,
             None => {
@@ -345,7 +367,7 @@ impl ProxyHttp for App {
 
 impl App {
     async fn handle_api(&self, session: &mut Session, method: &str, path: &str) {
-        let state = self.state.lock().await;
+        let mut state = self.state.lock().await;
         let source_ip = get_source_ip(session);
         let session_hours = self.session_hours;
 
@@ -353,14 +375,14 @@ impl App {
             ("POST", "/api/auth/login") => {
                 drop(state);
                 let body = read_full_request_body(session).await;
-                let state = self.state.lock().await;
-                handle_login(&state, &source_ip, &body, session_hours).await
+                let mut state = self.state.lock().await;
+                handle_login(&mut *state, &source_ip, &body, session_hours, self.demo).await
             }
             ("POST", "/api/auth/logout") => {
-                (handle_logout(&state, session, &source_ip).await, String::new())
+                (handle_logout(&mut *state, session, &source_ip).await, String::new())
             }
             ("GET", "/api/auth/session") => {
-                (handle_session_check(&state, session).await, String::new())
+                (handle_session_check(&state, session, self.demo).await, String::new())
             }
             ("GET", "/api/status") => {
                 let mut stats = state.status.get_stats();
@@ -373,7 +395,7 @@ impl App {
                 (json_body(&stats), String::new())
             }
             ("GET", "/api/apps") => {
-                (handle_get_apps(&state, session).await, String::new())
+                (handle_get_apps(&state, session, self.demo).await, String::new())
             }
             ("POST", "/api/apps") => {
                 drop(state);
@@ -402,7 +424,7 @@ impl App {
                 (handle_update_permissions(&state, session, user_id, &body).await, String::new())
             }
             ("GET", "/api/audit") => {
-                (handle_get_audit_logs(&state, session).await, String::new())
+                (handle_get_audit_logs(&state, session, self.demo).await, String::new())
             }
             _ => (json_error("API endpoint not found"), String::new()),
         };
@@ -415,7 +437,42 @@ impl App {
     }
 }
 
-async fn handle_login(state: &AppState, source_ip: &str, body: &str, session_hours: i64) -> (Bytes, String) {
+async fn handle_demo_login(state: &mut AppState, source_ip: &str, session_hours: i64) -> (Bytes, String) {
+    let demo_user = match find_user_by_username(&state.db, "admin").await {
+        Ok(Some(u)) => u,
+        _ => {
+            let hash = argon2::hash_encoded(b"admin123", b"web-ssl-vpn-salt-2024", &argon2::Config::default()).unwrap_or_default();
+            match create_user(&state.db, "admin", &hash, "admin").await {
+                Ok(u) => u,
+                Err(_) => return (json_error("Failed to create demo user"), String::new()),
+            }
+        }
+    };
+
+    let session_id = Uuid::new_v4().to_string();
+    let expires_at = (Utc::now() + Duration::hours(session_hours)).format("%Y-%m-%d %H:%M:%S").to_string();
+    if let Err(e) = create_session(&state.db, demo_user.id, &session_id, &expires_at).await {
+        error!("Failed to create demo session: {}", e);
+        return (json_error("Internal error"), String::new());
+    }
+    state.status.add_session(session_id.clone());
+
+    let _ = create_audit_log(&state.db, Some(demo_user.id), "login", source_ip, "/api/auth/login", "success").await;
+    let apps = get_user_apps(&state.db, demo_user.id).await.unwrap_or_default();
+    info!("Demo login from {}", source_ip);
+
+    let max_age = session_hours * 3600;
+    let cookie = format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}", session_id, max_age);
+    (json_body(&ApiResponse::ok(&LoginResponse {
+        session_id, username: demo_user.username, role: demo_user.role, apps,
+    })), cookie)
+}
+
+async fn handle_login(state: &mut AppState, source_ip: &str, body: &str, session_hours: i64, demo: bool) -> (Bytes, String) {
+    if demo {
+        return handle_demo_login(state, source_ip, session_hours).await;
+    }
+
     let login: LoginRequest = match serde_json::from_str(body) {
         Ok(l) => l,
         Err(_) => return (json_error("Invalid request body"), String::new()),
@@ -431,6 +488,7 @@ async fn handle_login(state: &AppState, source_ip: &str, body: &str, session_hou
                     error!("Failed to create session: {}", e);
                     return (json_error("Internal error"), String::new());
                 }
+                state.status.add_session(session_id.clone());
                 let _ = create_audit_log(&state.db, Some(user.id), "login", source_ip, "/api/auth/login", "success").await;
                 let apps = get_user_apps(&state.db, user.id).await.unwrap_or_default();
                 info!("User '{}' logged in from {}", login.username, source_ip);
@@ -452,25 +510,37 @@ async fn handle_login(state: &AppState, source_ip: &str, body: &str, session_hou
     }
 }
 
-async fn handle_logout(state: &AppState, session: &Session, source_ip: &str) -> Bytes {
+async fn handle_logout(state: &mut AppState, session: &Session, source_ip: &str) -> Bytes {
     let session_id = extract_session_id(session);
     if let Some(sid) = &session_id {
         if let Ok(Some(s)) = find_session(&state.db, sid).await {
             let _ = create_audit_log(&state.db, Some(s.user_id), "logout", source_ip, "/api/auth/logout", "success").await;
         }
+        state.status.remove_session(sid);
         let _ = delete_session(&state.db, sid).await;
     }
     json_body(&ApiResponse::ok(&"Logged out successfully"))
 }
 
-async fn handle_session_check(state: &AppState, session: &Session) -> Bytes {
+async fn handle_session_check(state: &AppState, session: &Session, demo: bool) -> Bytes {
+    if demo {
+        return json_body(&ApiResponse::ok(&SessionResponse {
+            authenticated: true,
+            username: Some("admin".to_string()),
+            role: Some("admin".to_string()),
+        }));
+    }
     match verify_auth(state, session).await {
         Some(user) => json_body(&ApiResponse::ok(&SessionResponse { authenticated: true, username: Some(user.username), role: Some(user.role) })),
         None => json_body(&ApiResponse::ok(&SessionResponse { authenticated: false, username: None, role: None })),
     }
 }
 
-async fn handle_get_apps(state: &AppState, session: &Session) -> Bytes {
+async fn handle_get_apps(state: &AppState, session: &Session, demo: bool) -> Bytes {
+    if demo {
+        let apps = get_all_apps(&state.db).await.unwrap_or_default();
+        return json_body(&ApiResponse::ok(&apps));
+    }
     match verify_auth(state, session).await {
         Some(user) => {
             let apps = if user.role == "admin" { get_all_apps(&state.db).await.unwrap_or_default() }
@@ -527,10 +597,27 @@ async fn handle_update_permissions(state: &AppState, session: &Session, user_id:
     }
 }
 
-async fn handle_get_audit_logs(state: &AppState, session: &Session) -> Bytes {
+async fn handle_get_audit_logs(state: &AppState, session: &Session, demo: bool) -> Bytes {
+    if demo {
+        let logs = get_audit_logs(&state.db, 100).await.unwrap_or_default();
+        if logs.is_empty() {
+            return json_body(&ApiResponse::ok(&demo_audit_logs()));
+        }
+        return json_body(&ApiResponse::ok(&logs));
+    }
     if !verify_admin(state, session).await { return json_error("Admin access required"); }
     let logs = get_audit_logs(&state.db, 100).await.unwrap_or_default();
     json_body(&ApiResponse::ok(&logs))
+}
+
+fn demo_audit_logs() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({"id": 1, "timestamp": "09:30:00", "user_id": 1, "action": "login", "target_url": "/api/auth/login", "source_ip": "192.168.1.100", "result": "success"}),
+        serde_json::json!({"id": 2, "timestamp": "09:31:00", "user_id": 2, "action": "proxy_access", "target_url": "wiki.internal:3000", "source_ip": "10.0.0.55", "result": "success"}),
+        serde_json::json!({"id": 3, "timestamp": "09:32:00", "user_id": 3, "action": "access_denied", "target_url": "mail.internal:8080", "source_ip": "192.168.1.200", "result": "denied"}),
+        serde_json::json!({"id": 4, "timestamp": "09:33:00", "user_id": 1, "action": "proxy_access", "target_url": "files.internal:9000", "source_ip": "192.168.1.100", "result": "success"}),
+        serde_json::json!({"id": 5, "timestamp": "09:34:00", "user_id": 2, "action": "logout", "target_url": "/api/auth/logout", "source_ip": "10.0.0.55", "result": "success"}),
+    ]
 }
 
 //// Main
@@ -567,7 +654,7 @@ fn main() {
         }
     });
 
-    let ebpf_monitor = ebpf::EbpfMonitor::try_new("lo");
+    let ebpf_monitor = ebpf::EbpfMonitor::try_new(&config.ebpf_iface);
     let state = Arc::new(Mutex::new(AppState { status: StatusCollector::new(), ebpf: ebpf_monitor, db }));
 
     let static_files = load_static_files(&config.static_dir);
@@ -582,7 +669,7 @@ fn main() {
     };
     server.bootstrap();
 
-    let app = App { state, static_files, dashboard_index, session_hours };
+    let app = App { state, static_files, dashboard_index, session_hours, demo: config.demo };
     let mut proxy = http_proxy_service(&server.configuration, app);
     proxy.add_tcp(&config.http_bind);
     info!("HTTP listener on {}", config.http_bind);
@@ -603,6 +690,14 @@ fn main() {
     }
 
     server.add_service(proxy);
+    if config.demo {
+        warn!("================================================");
+        warn!("  DEMO MODE ENABLED");
+        warn!("  Authentication is bypassed");
+        warn!("  Data may be simulated");
+        warn!("  Default admin: admin / admin123");
+        warn!("================================================");
+    }
     info!("Web SSL VPN running: https://localhost:8443 | admin / admin123");
     server.run_forever();
 }

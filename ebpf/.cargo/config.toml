@@ -2,10 +2,4 @@
 target = "bpfel-unknown-none"
 
 [target.bpfel-unknown-none]
-rustflags = [
-    "-C", "link-arg=-z", "noexecstack",
-    "-C", "link-arg=--no-ld-generated-unwind-info",
-    "-C", "link-arg=--orphan-handling=warn",
-    "-C", "link-arg=--unresolved-symbols=ignore-in-object-files",
-    "--emit=obj",
-]
+linker = "bpf-linker"
