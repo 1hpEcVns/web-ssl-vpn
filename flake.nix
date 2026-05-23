@@ -27,6 +27,7 @@
               zig
               cmake
               perl
+              sudo
             ];
 
             RUSTUP_TOOLCHAIN = "stable";
@@ -42,6 +43,16 @@
             shellHook = ''
               export ZIG_CACHE_DIR="$PWD/.cache/zig"
               export XDG_CACHE_HOME="$PWD/.cache"
+
+              export http_proxy="''${http_proxy:-http://127.0.0.1:7897}"
+              export https_proxy="''${https_proxy:-http://127.0.0.1:7897}"
+
+              if ! rustup toolchain list | grep -q nightly; then
+                rustup toolchain install nightly
+              fi
+              if ! rustup +nightly component list --installed | grep -q rust-src; then
+                rustup +nightly component add rust-src
+              fi
             '';
           };
         });

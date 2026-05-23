@@ -5,10 +5,12 @@ pub fn build(b: *std.Build) void {
     const trust_step  = b.step("trust",     "Generate certs/ca-bundle.crt for SSL trust");
     const ca_step     = b.step("install-ca","Install CA cert to system trust store (sudo)");
     const trunk_step  = b.step("trunk",     "Build iced WASM frontend (debug)");
-    const check_step  = b.step("check",     "cargo check server + web (fast compile check)");
+    const check_step  = b.step("check",     "cargo check server + web + ebpf (fast compile check)");
     const test_step   = b.step("test",      "cargo test all packages");
     const wasm_step   = b.step("wasm",      "Full frontend: certs + trust + trunk");
     const run_step    = b.step("run",       "Build all + start server (debug)");
+    const ebpf_build  = b.step("ebpf-build","Build eBPF BPF program (bpfel-unknown-none)");
+    const ebpf_run    = b.step("ebpf-run",  "Build eBPF + trunk + server, run with sudo (BPF attach)");
     const release_step = b.step("release",  "Release build: certs + trunk --release + cargo build --release");
 
     // ── Certificates ──────────────────────────────────
@@ -105,6 +107,20 @@ pub fn build(b: *std.Build) void {
 
     test_step.dependOn(&test_cmd.step);
 
+    // ── eBPF Build ────────────────────────────────────
+
+    const ebpf_build_cmd = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\export RUSTUP_TOOLCHAIN=nightly
+        \\export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v 'cargo-' | grep -v 'rustc-wrapper' | tr '\n' ':')
+        \\export RUSTFLAGS="--emit=obj"
+        \\rustup run nightly cargo build -p ebpf --target bpfel-unknown-none --release -Z build-std=core
+        \\cp target/bpfel-unknown-none/release/deps/ebpf-*.o target/bpfel-unknown-none/release/ebpf 2>/dev/null || true
+    });
+    ebpf_build_cmd.setCwd(.{ .cwd_relative = "." });
+
+    ebpf_build.dependOn(&ebpf_build_cmd.step);
+
     // ── Run (debug) ───────────────────────────────────
 
     const run_cmd = b.addSystemCommand(&.{ "cargo", "run", "-p", "server" });
@@ -112,8 +128,36 @@ pub fn build(b: *std.Build) void {
     run_cmd.step.dependOn(&rm_csr.step);
     run_cmd.step.dependOn(&gen_bundle.step);
     run_cmd.step.dependOn(&trunk_cmd.step);
+    run_cmd.step.dependOn(&ebpf_build_cmd.step);
 
     run_step.dependOn(&run_cmd.step);
+
+    // ── eBPF Run ──────────────────────────────────────
+
+    const ebpf_run_cmd = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\echo "=== eBPF requires root for TC attach ==="
+        \\sudo -v || { echo "sudo authentication failed"; exit 1; }
+        \\sudo -E cargo run -p server
+    });
+    ebpf_run_cmd.setCwd(.{ .cwd_relative = "." });
+    ebpf_run_cmd.step.dependOn(&rm_csr.step);
+    ebpf_run_cmd.step.dependOn(&gen_bundle.step);
+    ebpf_run_cmd.step.dependOn(&trunk_cmd.step);
+    ebpf_run_cmd.step.dependOn(&ebpf_build_cmd.step);
+
+    ebpf_run.dependOn(&ebpf_run_cmd.step);
+
+    // ── Check (extended) ───────────────────────────────
+
+    const check_ebpf = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\export RUSTUP_TOOLCHAIN=nightly
+        \\export PATH=$(echo "$PATH" | tr ':' '\n' | grep -v 'cargo-' | grep -v 'rustc-wrapper' | tr '\n' ':')
+        \\rustup run nightly cargo check -p ebpf --target bpfel-unknown-none -Z build-std=core
+    });
+    check_ebpf.setCwd(.{ .cwd_relative = "." });
+    check_web.step.dependOn(&check_ebpf.step);
 
     // ── Release ───────────────────────────────────────
 

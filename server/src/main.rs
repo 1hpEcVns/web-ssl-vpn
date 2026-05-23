@@ -1,4 +1,6 @@
+mod config;
 mod db;
+mod ebpf;
 mod status;
 
 use async_trait::async_trait;
@@ -8,7 +10,7 @@ use db::{
     cleanup_expired_sessions, create_app, create_audit_log, create_session, create_user,
     delete_app, delete_session, find_session, find_user_by_username, get_all_apps,
     get_app_by_id, get_audit_logs, get_user_apps, get_all_users,
-    init_database, set_user_permissions, user_has_app_permission,
+    init_database, seed_default_apps, set_user_permissions, user_has_app_permission,
 };
 use log::{error, info, warn};
 use pingora_core::listeners::tls::TlsSettings;
@@ -18,15 +20,16 @@ use pingora_core::Result;
 use pingora_proxy::http_proxy_service;
 use pingora_proxy::{ProxyHttp, Session};
 use serde::{Deserialize, Serialize};
+use status::StatusCollector;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
-use status::StatusCollector;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 struct AppState {
     status: StatusCollector,
+    ebpf: ebpf::EbpfMonitor,
     db: sea_orm::DatabaseConnection,
 }
 
@@ -34,6 +37,7 @@ struct App {
     state: Arc<Mutex<AppState>>,
     static_files: HashMap<String, Vec<u8>>,
     dashboard_index: String,
+    session_hours: i64,
 }
 
 #[derive(Deserialize)]
@@ -75,10 +79,9 @@ struct CreateUserRequest { username: String, password: String, role: String }
 #[derive(Deserialize)]
 struct UpdatePermissionsRequest { app_ids: Vec<i64> }
 
-fn load_static_files() -> HashMap<String, Vec<u8>> {
+fn load_static_files(dist_dir: &Path) -> HashMap<String, Vec<u8>> {
     let mut map = HashMap::new();
-    let dist = Path::new("web/dist");
-    if let Ok(entries) = std::fs::read_dir(dist) {
+    if let Ok(entries) = std::fs::read_dir(dist_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -196,67 +199,6 @@ async fn respond_html(session: &mut Session, html: String) {
 //// HTML Templates
 
 const LOGIN_HTML: &str = include_str!("../html/login.html");
-const DASHBOARD_TMPL: &str = include_str!("../html/dashboard.html");
-
-const ADMIN_SECTION_FOR_DASHBOARD: &str = r##"
-        <div class="section">
-            <h2>Admin Panel</h2>
-            <div class="admin-links">
-                <a href="#" onclick="loadAuditLogs()" class='admin-link'>Audit Logs</a>
-                <a href="#" onclick="loadUsers()" class='admin-link'>User Management</a>
-                <a href="#" onclick="showAddApp()" class='admin-link'>Add Application</a>
-                <a href="#" onclick="loadApps()" class='admin-link'>Manage Apps</a>
-            </div>
-        </div>
-        <div id="adminContent"></div>
-        <div id="adminModal" class="modal" style="display:none;">
-            <div class='modal-content'>
-                <span class="close" onclick="closeModal()">&times;</span>
-                <div id="modalBody"></div>
-            </div>
-        </div>
-"##;
-
-async fn get_dashboard_html(state: Arc<Mutex<AppState>>) -> String {
-    let s = state.lock().await;
-    let users = get_all_users(&s.db).await.unwrap_or_default();
-    let username = users.first().map(|u| u.username.clone()).unwrap_or_else(|| "Admin".to_string());
-    let role = users.first().map(|u| u.role.clone()).unwrap_or_else(|| "admin".to_string());
-    let apps = get_all_apps(&s.db).await.unwrap_or_default();
-
-    let app_cards: String = if apps.is_empty() {
-        "<div class=\"empty-state\">No applications available</div>".to_string()
-    } else {
-        apps.iter().map(|app| {
-            if app.name.is_empty() { return String::new(); }
-            let initial = app.name.chars().next().unwrap_or('?').to_uppercase().to_string();
-            format!(
-                "<a href=\"/proxy/{}\" class=\"app-card\" target=\"_blank\">\
-                 <div class=\"app-icon\">{}</div>\
-                 <div class=\"app-name\">{}</div>\
-                 <div class=\"app-desc\">{}</div>\
-                 <div class=\"app-url\">{}</div></a>",
-                app.id, initial,
-                html_escape(&app.name),
-                html_escape(if app.description.is_empty() { "No description" } else { &app.description }),
-                html_escape(&app.url),
-            )
-        }).collect::<Vec<_>>().join("\n")
-    };
-
-    let admin_section = if role == "admin" { ADMIN_SECTION_FOR_DASHBOARD.to_string() } else { String::new() };
-
-    DASHBOARD_TMPL
-        .replace("{username}", &html_escape(&username))
-        .replace("{role}", &html_escape(&role))
-        .replace("{app_cards}", &app_cards)
-        .replace("{admin_section}", &admin_section)
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-        .replace('"', "&quot;").replace('\'', "&#39;")
-}
 
 //// ProxyHttp
 
@@ -405,13 +347,14 @@ impl App {
     async fn handle_api(&self, session: &mut Session, method: &str, path: &str) {
         let state = self.state.lock().await;
         let source_ip = get_source_ip(session);
+        let session_hours = self.session_hours;
 
         let (response_body, cookie) = match (method, path) {
             ("POST", "/api/auth/login") => {
                 drop(state);
                 let body = read_full_request_body(session).await;
                 let state = self.state.lock().await;
-                handle_login(&state, &source_ip, &body).await
+                handle_login(&state, &source_ip, &body, session_hours).await
             }
             ("POST", "/api/auth/logout") => {
                 (handle_logout(&state, session, &source_ip).await, String::new())
@@ -420,7 +363,14 @@ impl App {
                 (handle_session_check(&state, session).await, String::new())
             }
             ("GET", "/api/status") => {
-                (json_body(&state.status.get_stats()), String::new())
+                let mut stats = state.status.get_stats();
+                let ebpf_stats = state.ebpf.read_stats();
+                if ebpf_stats.bytes_sent > 0 || ebpf_stats.bytes_recv > 0 {
+                    stats.bytes_sent = ebpf_stats.bytes_sent;
+                    stats.bytes_recv = ebpf_stats.bytes_recv;
+                    stats.connections = ebpf_stats.active_conns;
+                }
+                (json_body(&stats), String::new())
             }
             ("GET", "/api/apps") => {
                 (handle_get_apps(&state, session).await, String::new())
@@ -465,7 +415,7 @@ impl App {
     }
 }
 
-async fn handle_login(state: &AppState, source_ip: &str, body: &str) -> (Bytes, String) {
+async fn handle_login(state: &AppState, source_ip: &str, body: &str, session_hours: i64) -> (Bytes, String) {
     let login: LoginRequest = match serde_json::from_str(body) {
         Ok(l) => l,
         Err(_) => return (json_error("Invalid request body"), String::new()),
@@ -476,7 +426,7 @@ async fn handle_login(state: &AppState, source_ip: &str, body: &str) -> (Bytes, 
             let valid = argon2::verify_encoded(&user.password_hash, login.password.as_bytes()).unwrap_or(false);
             if valid {
                 let session_id = Uuid::new_v4().to_string();
-                let expires_at = (Utc::now() + Duration::hours(8)).format("%Y-%m-%d %H:%M:%S").to_string();
+                let expires_at = (Utc::now() + Duration::hours(session_hours)).format("%Y-%m-%d %H:%M:%S").to_string();
                 if let Err(e) = create_session(&state.db, user.id, &session_id, &expires_at).await {
                     error!("Failed to create session: {}", e);
                     return (json_error("Internal error"), String::new());
@@ -484,7 +434,8 @@ async fn handle_login(state: &AppState, source_ip: &str, body: &str) -> (Bytes, 
                 let _ = create_audit_log(&state.db, Some(user.id), "login", source_ip, "/api/auth/login", "success").await;
                 let apps = get_user_apps(&state.db, user.id).await.unwrap_or_default();
                 info!("User '{}' logged in from {}", login.username, source_ip);
-                let cookie = format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=28800", session_id);
+                let max_age = session_hours * 3600;
+                let cookie = format!("session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}", session_id, max_age);
                 (json_body(&ApiResponse::ok(&LoginResponse {
                     session_id, username: user.username, role: user.role, apps,
                 })), cookie)
@@ -586,6 +537,10 @@ async fn handle_get_audit_logs(state: &AppState, session: &Session) -> Bytes {
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let config = config::ServerConfig::from_env();
+    config.print_config();
+
     info!("Starting Web SSL VPN server");
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -593,12 +548,16 @@ fn main() {
         Err(e) => { error!("Failed to create Tokio runtime: {}", e); std::process::exit(1); }
     };
 
-    let db_path = Path::new("vpn.db");
+    let db_path = &config.db_path;
+    let session_hours = config.session_hours;
     let db = rt.block_on(async {
         match init_database(db_path).await {
             Ok(db) => {
                 info!("Database initialized successfully");
                 let _ = cleanup_expired_sessions(&db).await;
+                if let Err(e) = seed_default_apps(&db).await {
+                    error!("Failed to seed default apps: {}", e);
+                }
                 db
             }
             Err(e) => {
@@ -608,13 +567,14 @@ fn main() {
         }
     });
 
-    let state = Arc::new(Mutex::new(AppState { status: StatusCollector::new(), db }));
+    let ebpf_monitor = ebpf::EbpfMonitor::try_new("lo");
+    let state = Arc::new(Mutex::new(AppState { status: StatusCollector::new(), ebpf: ebpf_monitor, db }));
 
-    let static_files = load_static_files();
+    let static_files = load_static_files(&config.static_dir);
     let dashboard_index = static_files.get("/index.html")
         .map(|d| String::from_utf8_lossy(d).to_string())
         .unwrap_or_else(|| "<h1>WASM not built: run zig build trunk</h1>".to_string());
-    info!("Loaded {} static files from web/dist/", static_files.len());
+    info!("Loaded {} static files from {}", static_files.len(), config.static_dir.display());
 
     let mut server = match Server::new(None) {
         Ok(s) => s,
@@ -622,18 +582,24 @@ fn main() {
     };
     server.bootstrap();
 
-    let app = App { state, static_files, dashboard_index };
+    let app = App { state, static_files, dashboard_index, session_hours };
     let mut proxy = http_proxy_service(&server.configuration, app);
-    proxy.add_tcp("0.0.0.0:8080");
-    info!("HTTP listener on 0.0.0.0:8080");
+    proxy.add_tcp(&config.http_bind);
+    info!("HTTP listener on {}", config.http_bind);
 
-    match TlsSettings::intermediate("certs/server.crt", "certs/server.key") {
-        Ok(mut tls_settings) => {
-            tls_settings.enable_h2();
-            proxy.add_tls_with_settings("0.0.0.0:8443", None, tls_settings);
-            info!("HTTPS listener on 0.0.0.0:8443");
+    if config.is_tls_configured() {
+        let cert = config.tls_cert.to_string_lossy().to_string();
+        let key = config.tls_key.to_string_lossy().to_string();
+        match TlsSettings::intermediate(&cert, &key) {
+            Ok(mut tls_settings) => {
+                tls_settings.enable_h2();
+                proxy.add_tls_with_settings(&config.https_bind, None, tls_settings);
+                info!("HTTPS listener on {}", config.https_bind);
+            }
+            Err(e) => error!("TLS settings failed (HTTPS unavailable): {:?}", e),
         }
-        Err(e) => error!("TLS settings failed (HTTPS unavailable): {:?}", e),
+    } else {
+        warn!("TLS certificates not found - HTTPS disabled");
     }
 
     server.add_service(proxy);

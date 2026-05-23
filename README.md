@@ -10,6 +10,7 @@
 | 前端 | Iced 0.14 WASM (sniffnet风格主题) |
 | 样式 | Palette 配色系统 + ContainerType/ButtonType/TextType Catalog |
 | 数据库 | Sea-ORM 2.0 + SQLite |
+| 监控 | aya 0.13 eBPF TC classifier (实时流量统计) |
 | 环境 | Nix Flakes + Zig build system |
 
 ## 功能特性
@@ -50,17 +51,17 @@ nix develop --ignore-environment --command bash -c '
 
 | 命令 | 说明 |
 |------|------|
-| `zig build check` | cargo check 检查 server + web 编译 |
-| `zig build test` | cargo test 运行所有测试 |
+| `zig build check` | cargo check server + web + ebpf (快速编译检查) |
+| `zig build test` | cargo test 运行所有测试 (21 tests) |
 | `zig build trunk` | trunk build iced WASM 前端 (debug) |
 | `zig build wasm` | certs + trust + trunk 全套前端 |
-| `zig build run` | 全量构建 + 启动服务 (debug) |
+| `zig build run` | 全量构建 + 启动服务 (debug, 自动 eBPF 回退) |
+| `zig build ebpf-build` | 编译 eBPF BPF 字节码 (需 nightly + rust-src) |
+| `zig build ebpf-run` | eBPF + trunk + server, sudo 密码提示后启动 (TC attach) |
 | `zig build release` | 发布构建: trunk --release + cargo --release |
 | `zig build certs` | 生成 CA + 服务器证书 |
 | `zig build trust` | 生成 ca-bundle.crt 信任包 |
 | `zig build install-ca` | 安装 CA 到系统信任 (sudo) |
-
-## 构建步骤
 
 ### 环境
 
@@ -82,6 +83,17 @@ cargo run -p server
 cd web && trunk build
 # 产物在 web/dist/
 ```
+
+## 配置 (环境变量)
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `VPN_HTTP_BIND` | `0.0.0.0:8080` | HTTP 监听地址 |
+| `VPN_HTTPS_BIND` | `0.0.0.0:8443` | HTTPS 监听地址 |
+| `VPN_TLS_CERT` | `certs/server.crt` | TLS 证书路径 |
+| `VPN_DB_PATH` | `vpn.db` | SQLite 数据库路径 |
+| `VPN_SESSION_HOURS` | `8` | 会话超时（小时） |
+| `VPN_LOG_LEVEL` | `info` | 日志级别 |
 
 ## API 端点
 
@@ -130,10 +142,15 @@ web-ssl-vpn/
 │   ├── src/
 │   │   ├── main.rs          # 服务器入口，API路由，反向代理
 │   │   ├── db.rs            # 数据库实体与CRUD操作
-│   │   └── status.rs        # 系统状态收集
+│   │   ├── status.rs        # 系统状态收集
+│   │   ├── config.rs        # 配置模块 + 环境变量
+│   │   └── ebpf.rs          # eBPF TC 监控加载器
+│   ├── build.rs             # 编译前自动构建 eBPF 程序
 │   └── html/
 │       ├── login.html        # 登录页面
-│       └── dashboard.html    # 仪表盘模板
+│       └── dashboard.html    # 仪表盘模板 (已由 WASM 替代)
+├── ebpf/
+│   └── src/lib.rs            # eBPF TC classifier (tc_ingress/tc_egress)
 ├── web/
 │   ├── src/main.rs           # Iced WASM 前端
 │   ├── index.html
@@ -145,8 +162,8 @@ web-ssl-vpn/
 │   ├── server.key            # 服务器私钥
 │   └── ca-bundle.crt         # 合并信任包 (系统 + CA)
 ├── Cargo.toml                # Rust工作空间配置
-├── flake.nix                 # Nix开发环境
-├── build.zig                 # Zig构建脚本
+├── flake.nix                 # Nix开发环境 (含 nightly + rust-src)
+├── build.zig                 # Zig构建脚本 (ebpf-build / ebpf-run)
 └── README.md
 ```
 

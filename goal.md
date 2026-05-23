@@ -1,19 +1,3 @@
-# 项目计划
-
-## 技术架构
-环境
-0. 整体的环境使用 nix develop --ignore-env 原生可复现配置
-1. 服务器使用 pingora + cargo （简单）
-2. 前端使用 iced + trunk (用于编译到wasm等) 参考 https://github.com/1hpEcVns/iced-web-poc （已经实现）
-3. 数据库使用 sea-orm + sqlite （已实现）
-4. 使用 aya 的 ebpf进行运行时监控 （简单）
-5. 使用 incus 进行打包
---
-
-以下是作业内容
-
---
-
 # 基于Web门户的轻量级SSL VPN访问
 
 ## 任务背景

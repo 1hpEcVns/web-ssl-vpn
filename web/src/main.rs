@@ -264,8 +264,16 @@ fn qbar(pct: f32, c: iced::Color) -> Element<'static, Message, StyleType> {
 }
 fn bars(sent: &[f32], recv: &[f32]) -> Element<'static, Message, StyleType> {
     let p = StyleType::NordDark.get_palette();
+    if sent.is_empty() {
+        return container(column![
+            container(Space::new().height(Length::Fixed(100.0)).width(Length::Fill)),
+            Space::new().height(8),
+            row![d(p.secondary), Space::new().width(4), text("Sent").size(10).class(TextType::Dimmed), Space::new().width(12), d(p.outgoing), Space::new().width(4), text("Received").size(10).class(TextType::Dimmed)]
+                .align_y(alignment::Vertical::Center).spacing(0),
+        ]).into();
+    }
     let max = sent.iter().chain(recv).cloned().fold(0.0f32, f32::max).max(1.0);
-    let n = sent.len().max(1);
+    let n = sent.len();
     let bs: Vec<_> = (0..n).map(|i| {
         let sh = (sent[i]/max*50.0).max(1.0); let rh = (recv[i]/max*50.0).max(1.0);
         column![

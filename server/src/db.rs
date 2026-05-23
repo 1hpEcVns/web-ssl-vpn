@@ -285,6 +285,26 @@ async fn create_default_admin(db: &DatabaseConnection) -> Result<(), DbErr> {
     Ok(())
 }
 
+pub async fn seed_default_apps(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let count = AppEntity::find().count(db).await?;
+    if count == 0 {
+        create_app(db, "Internal Wiki", "Company documentation and knowledge base", "wiki.internal:3000", "").await?;
+        create_app(db, "Mail Server", "Roundcube webmail interface", "mail.internal:8080", "").await?;
+        create_app(db, "File Repository", "Internal file sharing and downloads", "files.internal:9000", "").await?;
+        create_app(db, "HR Portal", "Human resources management system", "hr.internal:5000", "").await?;
+
+        let admin = find_user_by_username(db, "admin").await?;
+        if let Some(admin) = admin {
+            let apps = get_all_apps(db).await?;
+            let app_ids: Vec<i64> = apps.iter().map(|a| a.id).collect();
+            set_user_permissions(db, admin.id, &app_ids).await?;
+        }
+
+        info!("Default demo applications seeded: Wiki, Mail, Files, HR");
+    }
+    Ok(())
+}
+
 // ============ User operations ============
 
 pub async fn find_user_by_username(db: &DatabaseConnection, username: &str) -> Result<Option<User>, DbErr> {
@@ -443,4 +463,190 @@ pub async fn create_audit_log(db: &DatabaseConnection, user_id: Option<i64>, act
 pub async fn get_audit_logs(db: &DatabaseConnection, limit: u64) -> Result<Vec<AuditLog>, DbErr> {
     let logs = AuditLogEntity::find().order_by_desc(AuditLogColumn::Id).limit(Some(limit)).all(db).await?;
     Ok(logs.into_iter().map(model_to_audit_log).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::Database;
+
+    async fn setup_db() -> DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        create_tables(&db).await.unwrap();
+        db
+    }
+
+    fn hash_password(pw: &str) -> String {
+        argon2::hash_encoded(pw.as_bytes(), b"test-salt", &argon2::Config::default()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_create_and_find_user() {
+        let db = setup_db().await;
+        create_user(&db, "testuser", &hash_password("pass123"), "user").await.unwrap();
+
+        let found = find_user_by_username(&db, "testuser").await.unwrap().unwrap();
+        assert_eq!(found.username, "testuser");
+        assert_eq!(found.role, "user");
+
+        let found = find_user_by_id(&db, found.id).await.unwrap().unwrap();
+        assert_eq!(found.username, "testuser");
+
+        let not_found = find_user_by_username(&db, "nonexistent").await.unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_all_users() {
+        let db = setup_db().await;
+        create_user(&db, "alice", &hash_password("a"), "user").await.unwrap();
+        create_user(&db, "bob", &hash_password("b"), "admin").await.unwrap();
+
+        let users = get_all_users(&db).await.unwrap();
+        assert_eq!(users.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_default_admin_seeded() {
+        let db = setup_db().await;
+        create_default_admin(&db).await.unwrap();
+        let users = get_all_users(&db).await.unwrap();
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].username, "admin");
+        assert_eq!(users[0].role, "admin");
+    }
+
+    #[tokio::test]
+    async fn test_default_admin_not_duplicated() {
+        let db = setup_db().await;
+        create_default_admin(&db).await.unwrap();
+        create_default_admin(&db).await.unwrap();
+        let users = get_all_users(&db).await.unwrap();
+        assert_eq!(users.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_session_crud() {
+        let db = setup_db().await;
+        create_default_admin(&db).await.unwrap();
+        let user = find_user_by_username(&db, "admin").await.unwrap().unwrap();
+
+        create_session(&db, user.id, "session-abc", "2026-12-31 23:59:59").await.unwrap();
+        let s = find_session(&db, "session-abc").await.unwrap().unwrap();
+        assert_eq!(s.user_id, user.id);
+        assert_eq!(s.expires_at, "2026-12-31 23:59:59");
+
+        delete_session(&db, "session-abc").await.unwrap();
+        let s = find_session(&db, "session-abc").await.unwrap();
+        assert!(s.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_app_crud() {
+        let db = setup_db().await;
+
+        let app = create_app(&db, "Wiki", "Internal wiki", "wiki:3000", "").await.unwrap();
+        assert_eq!(app.name, "Wiki");
+        assert!(app.is_active);
+
+        let apps = get_all_apps(&db).await.unwrap();
+        assert_eq!(apps.len(), 1);
+
+        let found = get_app_by_id(&db, app.id).await.unwrap().unwrap();
+        assert_eq!(found.url, "wiki:3000");
+
+        delete_app(&db, app.id).await.unwrap();
+        let apps = get_all_apps(&db).await.unwrap();
+        assert_eq!(apps.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_app_not_found_when_inactive() {
+        let db = setup_db().await;
+        let _app = create_app(&db, "Test", "", "test:80", "").await.unwrap();
+        let apps = get_all_apps(&db).await.unwrap();
+        assert_eq!(apps.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_permissions() {
+        let db = setup_db().await;
+        create_user(&db, "user1", &hash_password("p"), "user").await.unwrap();
+        let user = find_user_by_username(&db, "user1").await.unwrap().unwrap();
+        let app = create_app(&db, "App1", "", "app1:80", "").await.unwrap();
+
+        let has = user_has_app_permission(&db, user.id, app.id).await.unwrap();
+        assert!(!has);
+
+        grant_app_permission(&db, user.id, app.id).await.unwrap();
+        let has = user_has_app_permission(&db, user.id, app.id).await.unwrap();
+        assert!(has);
+
+        let perms = get_user_permissions(&db, user.id).await.unwrap();
+        assert_eq!(perms, vec![app.id]);
+
+        revoke_app_permission(&db, user.id, app.id).await.unwrap();
+        let has = user_has_app_permission(&db, user.id, app.id).await.unwrap();
+        assert!(!has);
+    }
+
+    #[tokio::test]
+    async fn test_set_user_permissions_replaces_all() {
+        let db = setup_db().await;
+        create_user(&db, "u", &hash_password("p"), "user").await.unwrap();
+        let user = find_user_by_username(&db, "u").await.unwrap().unwrap();
+        let app1 = create_app(&db, "A1", "", "a1:80", "").await.unwrap();
+        let app2 = create_app(&db, "A2", "", "a2:80", "").await.unwrap();
+
+        set_user_permissions(&db, user.id, &[app1.id, app2.id]).await.unwrap();
+        let perms = get_user_permissions(&db, user.id).await.unwrap();
+        assert_eq!(perms.len(), 2);
+
+        set_user_permissions(&db, user.id, &[app1.id]).await.unwrap();
+        let perms = get_user_permissions(&db, user.id).await.unwrap();
+        assert_eq!(perms, vec![app1.id]);
+    }
+
+    #[tokio::test]
+    async fn test_get_user_apps_respects_permissions() {
+        let db = setup_db().await;
+        create_user(&db, "normal", &hash_password("p"), "user").await.unwrap();
+        let user = find_user_by_username(&db, "normal").await.unwrap().unwrap();
+        let app1 = create_app(&db, "App1", "", "a1:80", "").await.unwrap();
+        let _app2 = create_app(&db, "App2", "", "a2:80", "").await.unwrap();
+
+        grant_app_permission(&db, user.id, app1.id).await.unwrap();
+
+        let apps = get_user_apps(&db, user.id).await.unwrap();
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "App1");
+    }
+
+    #[tokio::test]
+    async fn test_audit_log() {
+        let db = setup_db().await;
+
+        create_audit_log(&db, None, "login_failed", "1.2.3.4", "/login", "denied").await.unwrap();
+        create_audit_log(&db, Some(1), "login", "5.6.7.8", "/login", "success").await.unwrap();
+        create_audit_log(&db, Some(1), "proxy_access", "5.6.7.8", "wiki:3000", "success").await.unwrap();
+
+        let logs = get_audit_logs(&db, 10).await.unwrap();
+        assert_eq!(logs.len(), 3);
+
+        let limited = get_audit_logs(&db, 2).await.unwrap();
+        assert_eq!(limited.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_is_admin() {
+        let db = setup_db().await;
+        create_user(&db, "admin_user", &hash_password("p"), "admin").await.unwrap();
+        create_user(&db, "normal_user", &hash_password("p"), "user").await.unwrap();
+
+        let admin = find_user_by_username(&db, "admin_user").await.unwrap().unwrap();
+        let normal = find_user_by_username(&db, "normal_user").await.unwrap().unwrap();
+
+        assert!(is_admin(&db, admin.id).await.unwrap());
+        assert!(!is_admin(&db, normal.id).await.unwrap());
+    }
 }
