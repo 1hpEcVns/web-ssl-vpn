@@ -15,38 +15,31 @@ pub fn build(b: *std.Build) void {
 
     // ── Certificates ──────────────────────────────────
 
-    const gen_ca_key = b.addSystemCommand(&.{
-        "openssl", "genrsa", "-out", "certs/ca.key", "4096",
-    });
-    const gen_ca_crt = b.addSystemCommand(&.{
-        "openssl", "req", "-x509", "-new", "-nodes",
-        "-key", "certs/ca.key", "-sha256", "-days", "3650",
-        "-out", "certs/ca.crt", "-subj", "/CN=Web SSL VPN CA",
-    });
-    gen_ca_crt.step.dependOn(&gen_ca_key.step);
+    const mkdir_certs = b.addSystemCommand(&.{ "mkdir", "-p", "certs" });
 
-    const gen_srv_key = b.addSystemCommand(&.{
-        "openssl", "genrsa", "-out", "certs/server.key", "2048",
+    const gen_certs = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\if [ -f certs/ca.crt ] && [ -f certs/ca.key ] &&
+        \\   [ -f certs/server.crt ] && [ -f certs/server.key ]; then
+        \\  echo "Certificates already exist, skipping generation"
+        \\  exit 0
+        \\fi
+        \\echo "Generating CA certificate..."
+        \\openssl genrsa -out certs/ca.key 4096 2>/dev/null || true
+        \\openssl req -x509 -new -nodes -key certs/ca.key -sha256 -days 3650 \
+        \\  -out certs/ca.crt -subj "/CN=Web SSL VPN CA" 2>/dev/null || true
+        \\echo "Generating server certificate..."
+        \\openssl genrsa -out certs/server.key 2048 2>/dev/null || true
+        \\openssl req -new -key certs/server.key -out certs/server.csr \
+        \\  -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null || true
+        \\openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key \
+        \\  -CAcreateserial -out certs/server.crt -days 365 -sha256 \
+        \\  -extfile certs/ext.cnf 2>/dev/null || true
+        \\rm -f certs/server.csr
+        \\echo "Certificates ready"
     });
-    const gen_srv_csr = b.addSystemCommand(&.{
-        "openssl", "req", "-new", "-key", "certs/server.key",
-        "-out", "certs/server.csr", "-subj", "/CN=localhost",
-        "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
-    });
-    gen_srv_csr.step.dependOn(&gen_srv_key.step);
-
-    const sign_srv = b.addSystemCommand(&.{
-        "openssl", "x509", "-req", "-in", "certs/server.csr",
-        "-CA", "certs/ca.crt", "-CAkey", "certs/ca.key",
-        "-CAcreateserial", "-out", "certs/server.crt",
-        "-days", "365", "-sha256", "-extfile", "certs/ext.cnf",
-    });
-    sign_srv.step.dependOn(&gen_ca_crt.step);
-    sign_srv.step.dependOn(&gen_srv_csr.step);
-
-    const rm_csr = b.addSystemCommand(&.{ "rm", "-f", "certs/server.csr" });
-    rm_csr.step.dependOn(&sign_srv.step);
-    certs_step.dependOn(&rm_csr.step);
+    gen_certs.step.dependOn(&mkdir_certs.step);
+    certs_step.dependOn(&gen_certs.step);
 
     // ── Trust bundle ──────────────────────────────────
 
@@ -57,7 +50,7 @@ pub fn build(b: *std.Build) void {
         \\done
         \\cp certs/ca.crt certs/ca-bundle.crt && echo "Created certs/ca-bundle.crt (CA only)"
     });
-    gen_bundle.step.dependOn(&gen_ca_crt.step);
+    gen_bundle.step.dependOn(&gen_certs.step);
     trust_step.dependOn(&gen_bundle.step);
 
     // ── Install CA ────────────────────────────────────
@@ -76,7 +69,7 @@ pub fn build(b: *std.Build) void {
         \\  echo "Unknown distro. Manually trust certs/ca.crt"
         \\fi
     });
-    inst.step.dependOn(&gen_ca_crt.step);
+    inst.step.dependOn(&gen_certs.step);
     ca_step.dependOn(&inst.step);
 
     // ── Trunk (debug) ─────────────────────────────────
@@ -85,7 +78,7 @@ pub fn build(b: *std.Build) void {
     trunk_cmd.setCwd(.{ .cwd_relative = "web" });
 
     trunk_step.dependOn(&trunk_cmd.step);
-    wasm_step.dependOn(&rm_csr.step);
+    wasm_step.dependOn(&gen_certs.step);
     wasm_step.dependOn(&gen_bundle.step);
     wasm_step.dependOn(&trunk_cmd.step);
 
@@ -138,7 +131,7 @@ pub fn build(b: *std.Build) void {
 
     const build_server = b.addSystemCommand(&.{ "cargo", "build", "-p", "server" });
     build_server.setCwd(.{ .cwd_relative = "." });
-    build_server.step.dependOn(&rm_csr.step);
+    build_server.step.dependOn(&gen_certs.step);
     build_server.step.dependOn(&gen_bundle.step);
     build_server.step.dependOn(&trunk_cmd.step);
 
@@ -154,7 +147,7 @@ pub fn build(b: *std.Build) void {
 
     const build_ebpf_server = b.addSystemCommand(&.{ "cargo", "build", "-p", "server" });
     build_ebpf_server.setCwd(.{ .cwd_relative = "." });
-    build_ebpf_server.step.dependOn(&rm_csr.step);
+    build_ebpf_server.step.dependOn(&gen_certs.step);
     build_ebpf_server.step.dependOn(&gen_bundle.step);
     build_ebpf_server.step.dependOn(&trunk_cmd.step);
     build_ebpf_server.step.dependOn(&ebpf_build_cmd.step);
@@ -188,7 +181,7 @@ pub fn build(b: *std.Build) void {
 
     const trunk_release = b.addSystemCommand(&.{ "trunk", "build", "--release" });
     trunk_release.setCwd(.{ .cwd_relative = "web" });
-    trunk_release.step.dependOn(&rm_csr.step);
+    trunk_release.step.dependOn(&gen_certs.step);
 
     const build_release = b.addSystemCommand(&.{
         "cargo", "build", "--release", "-p", "server",
