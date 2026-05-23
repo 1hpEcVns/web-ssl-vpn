@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web SSL VPN</title>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0d0f17; }
+        canvas { display: block; width: 100%; height: 100%; }
+    </style>
+<link rel="modulepreload" href="/web-c1789fb55a45e09.js" crossorigin="anonymous" integrity="sha384-1DVTQG/6mjNzvDaz/dFRWzKS1bOz4/TkREmE7TbfsDXiG/1f1So75YHnWCPFnaUz"><link rel="preload" href="/web-c1789fb55a45e09_bg.wasm" crossorigin="anonymous" integrity="sha384-lzMIilV38IBaxizTGuGdvAVoqqq5r06046uTkq1ULI9rbDLDEchKg2outb4ACd3w" as="fetch" type="application/wasm"></head>
+<body>
+    
+<script type="module">
+import init, * as bindings from '/web-c1789fb55a45e09.js';
+const wasm = await init({ module_or_path: '/web-c1789fb55a45e09_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+</body>
+</html>

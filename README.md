@@ -154,8 +154,12 @@ web-ssl-vpn/
 │
 └── samples/                  # 截图 + 代码讲解
     ├── 01-ebpf.png ... 06-overview.png
-    └── slides/
+    └── slides/               # 代码截图由 [charmbracelet/freeze](https://github.com/charmbracelet/freeze) 生成
 ```
+
+## 致谢
+
+代码截图由 [charmbracelet/freeze](https://github.com/charmbracelet/freeze) 生成。字体: Maple Mono NF CN.
 
 ## 许可证
 
