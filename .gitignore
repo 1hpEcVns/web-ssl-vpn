@@ -11,3 +11,4 @@ vpn.db-wal
 vpn.db-shm
 *.bak
 /tmp/
+mock_http
