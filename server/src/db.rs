@@ -20,6 +20,8 @@ mod user {
         pub username: String,
         pub password_hash: String,
         pub role: String,
+        pub totp_secret: Option<String>,
+        pub totp_enabled: i64,
         pub created_at: String,
     }
 
@@ -141,6 +143,8 @@ pub struct User {
     pub username: String,
     pub password_hash: String,
     pub role: String,
+    pub totp_secret: Option<String>,
+    pub totp_enabled: bool,
     pub created_at: String,
 }
 
@@ -176,7 +180,11 @@ pub struct AuditLog {
 // ============ Helpers ============
 
 fn model_to_user(m: UserModel) -> User {
-    User { id: m.id, username: m.username, password_hash: m.password_hash, role: m.role, created_at: m.created_at }
+    User {
+        id: m.id, username: m.username, password_hash: m.password_hash,
+        role: m.role, totp_secret: m.totp_secret, totp_enabled: m.totp_enabled != 0,
+        created_at: m.created_at,
+    }
 }
 
 fn model_to_session(m: SessionModel) -> Session {
@@ -212,6 +220,8 @@ pub async fn create_tables(db: &DatabaseConnection) -> Result<(), DbErr> {
             .col(ColumnDef::new(UserColumn::Username).string().not_null().unique_key())
             .col(ColumnDef::new(UserColumn::PasswordHash).string().not_null())
             .col(ColumnDef::new(UserColumn::Role).string().not_null().default("'user'"))
+            .col(ColumnDef::new(UserColumn::TotpSecret).string())
+            .col(ColumnDef::new(UserColumn::TotpEnabled).integer().not_null().default("0"))
             .col(ColumnDef::new(UserColumn::CreatedAt).string().not_null().default("(datetime('now'))"))
             .to_owned()
     ).await.map(|_| ())?;
@@ -289,10 +299,10 @@ async fn create_default_admin(db: &DatabaseConnection) -> Result<(), DbErr> {
 pub async fn seed_default_apps(db: &DatabaseConnection) -> Result<(), DbErr> {
     let count = AppEntity::find().count(db).await?;
     if count == 0 {
-        create_app(db, "Internal Wiki", "Company documentation and knowledge base", "wiki.internal:3000", "").await?;
-        create_app(db, "Mail Server", "Roundcube webmail interface", "mail.internal:8080", "").await?;
-        create_app(db, "File Repository", "Internal file sharing and downloads", "files.internal:9000", "").await?;
-        create_app(db, "HR Portal", "Human resources management system", "hr.internal:5000", "").await?;
+        create_app(db, "Internal Wiki", "Company documentation and knowledge base", "127.0.0.1:3001", "").await?;
+        create_app(db, "Mail Server", "Roundcube webmail interface", "127.0.0.1:8081", "").await?;
+        create_app(db, "File Repository", "Internal file sharing and downloads", "127.0.0.1:9001", "").await?;
+        create_app(db, "HR Portal", "Human resources management system", "127.0.0.1:5001", "").await?;
 
         let admin = find_user_by_username(db, "admin").await?;
         if let Some(admin) = admin {
@@ -331,6 +341,36 @@ pub async fn create_user(db: &DatabaseConnection, username: &str, password_hash:
         ..Default::default()
     }.insert(db).await?;
     Ok(model_to_user(result))
+}
+
+pub async fn update_user_password(db: &DatabaseConnection, user_id: i64, password_hash: &str) -> Result<(), DbErr> {
+    let mut user: UserActiveModel = UserEntity::find_by_id(user_id).one(db).await?.ok_or(DbErr::RecordNotFound("user".into()))?.into();
+    user.password_hash = Set(password_hash.to_string());
+    user.update(db).await?;
+    Ok(())
+}
+
+pub async fn set_user_totp_secret(db: &DatabaseConnection, user_id: i64, secret: &str) -> Result<(), DbErr> {
+    let mut user: UserActiveModel = UserEntity::find_by_id(user_id).one(db).await?.ok_or(DbErr::RecordNotFound("user".into()))?.into();
+    user.totp_secret = Set(Some(secret.to_string()));
+    user.totp_enabled = Set(0);
+    user.update(db).await?;
+    Ok(())
+}
+
+pub async fn enable_user_totp(db: &DatabaseConnection, user_id: i64) -> Result<(), DbErr> {
+    let mut user: UserActiveModel = UserEntity::find_by_id(user_id).one(db).await?.ok_or(DbErr::RecordNotFound("user".into()))?.into();
+    user.totp_enabled = Set(1);
+    user.update(db).await?;
+    Ok(())
+}
+
+pub async fn disable_user_totp(db: &DatabaseConnection, user_id: i64) -> Result<(), DbErr> {
+    let mut user: UserActiveModel = UserEntity::find_by_id(user_id).one(db).await?.ok_or(DbErr::RecordNotFound("user".into()))?.into();
+    user.totp_secret = Set(None);
+    user.totp_enabled = Set(0);
+    user.update(db).await?;
+    Ok(())
 }
 
 
@@ -458,6 +498,7 @@ pub async fn create_audit_log(db: &DatabaseConnection, user_id: Option<i64>, act
         source_ip: Set(source_ip.to_string()),
         target_url: Set(target_url.to_string()),
         result: Set(result.to_string()),
+        timestamp: Set(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
         ..Default::default()
     }.insert(db).await?;
     Ok(())

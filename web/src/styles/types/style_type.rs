@@ -1,5 +1,7 @@
 use iced::theme::{Base, Mode, Style};
 use iced::color;
+use iced::widget::text_input;
+use iced::Border;
 use std::sync::LazyLock;
 
 use super::palette::Palette;
@@ -84,6 +86,41 @@ impl StyleType {
             Self::TokyoDark => *TOKYO_DARK_EXT,
             Self::CatppuccinDark => *CATPPUCCIN_DARK_EXT,
             Self::Custom(c) => c.extension,
+        }
+    }
+}
+
+impl text_input::Catalog for StyleType {
+    type Class<'a> = ();
+
+    fn default<'a>() -> Self::Class<'a> {}
+
+    fn style(&self, _class: &Self::Class<'_>, status: text_input::Status) -> text_input::Style {
+        let p = self.get_palette();
+        let active = text_input::Style {
+            background: iced::Background::Color(p.primary),
+            border: Border { radius: 6.0.into(), width: 1.0, color: color!(0x333355) },
+            icon: p.text_body,
+            placeholder: color!(0x555588),
+            value: p.text_body,
+            selection: color!(0x7aa2f7),
+        };
+        match status {
+            text_input::Status::Active => active,
+            text_input::Status::Focused { .. } => text_input::Style {
+                border: Border { color: p.secondary, ..active.border },
+                ..active
+            },
+            text_input::Status::Hovered => text_input::Style {
+                border: Border { color: color!(0x555577), ..active.border },
+                ..active
+            },
+            text_input::Status::Disabled => text_input::Style {
+                background: iced::Background::Color(color!(0x0a0b12)),
+                value: color!(0x444466),
+                placeholder: color!(0x333344),
+                ..active
+            },
         }
     }
 }

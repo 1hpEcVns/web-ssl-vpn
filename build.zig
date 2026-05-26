@@ -11,6 +11,8 @@ pub fn build(b: *std.Build) void {
     const run_step    = b.step("run",       "Build all + start server (debug, eBPF optional)");
     const ebpf_build  = b.step("ebpf-build","Build eBPF BPF program (bpfel-unknown-none)");
     const ebpf_run    = b.step("ebpf-run",  "Build eBPF + trunk + server, run with sudo (BPF attach)");
+    const desktop_step = b.step("desktop",   "Build native iced desktop app");
+    const desktop_run  = b.step("desktop-run","Build + run native desktop app");
     const release_step = b.step("release",  "Release build: certs + trunk --release + cargo build --release");
 
     // ── Certificates ──────────────────────────────────
@@ -75,6 +77,7 @@ pub fn build(b: *std.Build) void {
     // ── Trunk (debug) ─────────────────────────────────
 
     const trunk_cmd = b.addSystemCommand(&.{ "trunk", "build" });
+    trunk_cmd.setEnvironmentVariable("NO_COLOR", "true");
     trunk_cmd.setCwd(.{ .cwd_relative = "web" });
 
     trunk_step.dependOn(&trunk_cmd.step);
@@ -180,6 +183,7 @@ pub fn build(b: *std.Build) void {
     // ── Release ───────────────────────────────────────
 
     const trunk_release = b.addSystemCommand(&.{ "trunk", "build", "--release" });
+    trunk_release.setEnvironmentVariable("NO_COLOR", "true");
     trunk_release.setCwd(.{ .cwd_relative = "web" });
     trunk_release.step.dependOn(&gen_certs.step);
 
@@ -191,4 +195,47 @@ pub fn build(b: *std.Build) void {
     build_release.step.dependOn(&gen_bundle.step);
 
     release_step.dependOn(&build_release.step);
+
+    // ── Desktop ────────────────────────────────────────
+
+    const build_desktop = b.addSystemCommand(&.{
+        "cargo", "build", "-p", "desktop",
+    });
+    build_desktop.setCwd(.{ .cwd_relative = "." });
+
+    desktop_step.dependOn(&build_desktop.step);
+
+    const build_server_for_desktop = b.addSystemCommand(&.{ "cargo", "build", "-p", "server" });
+    build_server_for_desktop.setCwd(.{ .cwd_relative = "." });
+    build_server_for_desktop.step.dependOn(&gen_certs.step);
+    build_server_for_desktop.step.dependOn(&gen_bundle.step);
+
+    const run_desktop = b.addSystemCommand(&.{
+        "bash", "-c",
+        \\if [ -z "$VPN_SERVER" ]; then
+        \\  export VPN_SERVER="https://localhost:8443"
+        \\  if ! ss -tlnp 2>/dev/null | grep -q ':8443 '; then
+        \\    echo "Starting VPN server on :8443..."
+        \\    rm -f vpn.db
+        \\    ./target/debug/server &
+        \\    SERVER_PID=$!
+        \\    for i in $(seq 1 20); do
+        \\      sleep 0.5
+        \\      if ss -tlnp 2>/dev/null | grep -q ':8443 '; then break; fi
+        \\    done
+        \\    echo "VPN server ready"
+        \\  fi
+        \\fi
+        \\echo "Desktop → $VPN_SERVER"
+        \\./target/debug/desktop
+        \\if [ -n "${SERVER_PID:-}" ]; then
+        \\  kill $SERVER_PID 2>/dev/null
+        \\  echo "VPN server stopped"
+        \\fi
+    });
+    run_desktop.setCwd(.{ .cwd_relative = "." });
+    run_desktop.step.dependOn(&build_desktop.step);
+    run_desktop.step.dependOn(&build_server_for_desktop.step);
+
+    desktop_run.dependOn(&run_desktop.step);
 }

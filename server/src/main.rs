@@ -9,7 +9,7 @@ use bytes::Bytes;
 use chrono::{Duration, Utc};
 use db::{
     cleanup_expired_sessions, create_app, create_audit_log, create_session,
-    create_user,
+    create_user, update_user_password, set_user_totp_secret, enable_user_totp, disable_user_totp,
     delete_app, delete_session, find_session, find_user_by_username, get_all_apps,
     get_app_by_id, get_audit_logs, get_user_apps, get_all_users,
     init_database, seed_default_apps, set_user_permissions, user_has_app_permission,
@@ -30,18 +30,25 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+struct TwoFaChallenge {
+    user_id: i64,
+    expires_at: chrono::DateTime<Utc>,
+}
+
 struct AppState {
     status: StatusCollector,
     ebpf: ebpf::EbpfMonitor,
     db: sea_orm::DatabaseConnection,
     login_limiter: LoginRateLimiter,
+    two_fa_limiter: LoginRateLimiter,
+    two_fa_challenges: HashMap<String, TwoFaChallenge>,
 }
 
 struct App {
     state: Arc<Mutex<AppState>>,
     static_files: HashMap<String, Vec<u8>>,
     dashboard_index: String,
-    session_hours: i64,
+    session_minutes: i64,
     demo: bool,
 }
 
@@ -69,7 +76,10 @@ fn validate_app_name(s: &str) -> bool {
 
 fn check_referer_origin(session: &Session) -> bool {
     let req = session.req_header();
-    let host = req.headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let mut host = req.uri.authority().map(|a| a.as_str()).unwrap_or("");
+    if host.is_empty() {
+        host = req.headers.get("host").and_then(|v| v.to_str().ok()).unwrap_or("");
+    }
     if host.is_empty() { return false; }
     if let Some(origin) = req.headers.get("origin").and_then(|v| v.to_str().ok()) {
         return origin.contains(host) || origin == "null";
@@ -100,11 +110,20 @@ impl<T: Serialize> ApiResponse<T> {
 }
 
 #[derive(Serialize)]
+struct TwoFaSetupResponse {
+    secret: String,
+    qr_url: String,
+    qr_png: String,
+}
+
+#[derive(Serialize)]
 struct LoginResponse {
     session_id: String,
     username: String,
     role: String,
     apps: Vec<db::App>,
+    two_fa_required: bool,
+    two_fa_challenge: String,
 }
 
 #[derive(Serialize)]
@@ -112,6 +131,7 @@ struct SessionResponse {
     authenticated: bool,
     username: Option<String>,
     role: Option<String>,
+    totp_enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -256,7 +276,7 @@ async fn respond_html(session: &mut Session, html: String) {
     resp.insert_header("Content-Type", "text/html; charset=utf-8").ok();
     resp.insert_header("Content-Length", body.len().to_string()).ok();
     resp.insert_header("Content-Security-Policy",
-        "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+        "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'"
     ).ok();
     add_security_headers(&mut resp);
     let _ = session.write_response_header(Box::new(resp), false).await;
@@ -271,12 +291,22 @@ fn inject_demo_flag(html: &str) -> String {
     html.replace("</head>", "<script>window.__VPN_DEMO__=true;</script></head>")
 }
 
-//// ProxyHttp
+fn static_cast_ico() -> Vec<u8> {
+    br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#1a1a2e"/><text x="16" y="24" font-size="24" text-anchor="middle" fill="#4fc3f7" font-family="sans-serif">V</text></svg>"##.to_vec()
+}
+
+struct ProxyCtx {
+    app_id: i64,
+    app_url: String,
+    buffer: Vec<u8>,
+}
+
+// ProxyHttp
 
 #[async_trait]
 impl ProxyHttp for App {
-    type CTX = ();
-    fn new_ctx(&self) -> Self::CTX {}
+    type CTX = ProxyCtx;
+    fn new_ctx(&self) -> Self::CTX { ProxyCtx { app_id: 0, app_url: String::new(), buffer: Vec::new() } }
 
     fn suppress_error_log(&self, _session: &Session, _ctx: &Self::CTX, error: &pingora_core::Error) -> bool {
         match error.etype() {
@@ -355,10 +385,18 @@ impl ProxyHttp for App {
             ));
         }
 
+        if path == "/favicon.ico" {
+            let ico_data = static_cast_ico();
+            respond_static(session, &ico_data, "image/svg+xml").await;
+            return Err(pingora_core::Error::explain(
+                pingora_core::ErrorType::Custom("page_served"), "Favicon",
+            ));
+        }
+
         Ok(())
     }
 
-    async fn upstream_peer(&self, session: &mut Session, _ctx: &mut Self::CTX) -> Result<Box<HttpPeer>> {
+    async fn upstream_peer(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<Box<HttpPeer>> {
         let req = session.req_header();
         let path = req.uri.path().to_string();
         let source_ip = get_source_ip(session);
@@ -404,6 +442,8 @@ impl ProxyHttp for App {
                 Ok(Some(app)) => {
                     let _ = create_audit_log(&state.db, Some(user.id), "proxy_access", &source_ip, &format!("{} -> {}", path, app.url), "success").await;
                     let target = app.url.trim_end_matches('/').to_string();
+                    ctx.app_id = app_id;
+                    ctx.app_url = target.clone();
                     drop(state);
                     Ok(Box::new(HttpPeer::new(target, false, "".to_string())))
                 }
@@ -427,6 +467,73 @@ impl ProxyHttp for App {
             Ok(Box::new(HttpPeer::new("127.0.0.1:80".to_string(), false, "".to_string())))
         }
     }
+
+    async fn upstream_response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut pingora_http::ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        if ctx.app_id > 0 {
+            let prefix = format!("/proxy/{}", ctx.app_id);
+            if let Some(loc) = upstream_response.headers.get("location").and_then(|v| v.to_str().ok()) {
+                let mut rewritten = loc
+                    .replace(&ctx.app_url, &prefix)
+                    .replace(&format!("http://{}", ctx.app_url), &prefix)
+                    .replace(&format!("https://{}", ctx.app_url), &prefix);
+                for port in &["3001", "5001", "8081", "9001"] {
+                    rewritten = rewritten.replace(&format!("localhost:{}", port), &prefix);
+                    rewritten = rewritten.replace(&format!("http://localhost:{}", port), &prefix);
+                    rewritten = rewritten.replace(&format!("https://localhost:{}", port), &prefix);
+                    rewritten = rewritten.replace(&format!("127.0.0.1:{}", port), &prefix);
+                    rewritten = rewritten.replace(&format!("http://127.0.0.1:{}", port), &prefix);
+                    rewritten = rewritten.replace(&format!("https://127.0.0.1:{}", port), &prefix);
+                }
+                upstream_response.insert_header("Location", rewritten).ok();
+            }
+            upstream_response.remove_header("Content-Length");
+            upstream_response.insert_header("Transfer-Encoding", "Chunked").ok();
+        }
+        upstream_response.remove_header("Server");
+        upstream_response.remove_header("X-Powered-By");
+        Ok(())
+    }
+
+    fn response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<bytes::Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<std::time::Duration>>
+    where Self::CTX: Send + Sync
+    {
+        if ctx.app_id == 0 || ctx.app_url.is_empty() {
+            return Ok(None);
+        }
+        if let Some(b) = body {
+            ctx.buffer.extend(&b[..]);
+            b.clear();
+        }
+        if end_of_stream {
+            let prefix = format!("/proxy/{}", ctx.app_id);
+            let mut text = String::from_utf8_lossy(&ctx.buffer).into_owned();
+            text = text.replace(&ctx.app_url, &prefix);
+            text = text.replace(&format!("http://{}", ctx.app_url), &prefix);
+            text = text.replace(&format!("https://{}", ctx.app_url), &prefix);
+            for port in &["3001", "5001", "8081", "9001"] {
+                text = text.replace(&format!("localhost:{}", port), &prefix);
+                text = text.replace(&format!("http://localhost:{}", port), &prefix);
+                text = text.replace(&format!("https://localhost:{}", port), &prefix);
+                text = text.replace(&format!("127.0.0.1:{}", port), &prefix);
+                text = text.replace(&format!("http://127.0.0.1:{}", port), &prefix);
+                text = text.replace(&format!("https://127.0.0.1:{}", port), &prefix);
+            }
+            *body = Some(bytes::Bytes::copy_from_slice(text.as_bytes()));
+            ctx.buffer.clear();
+        }
+        Ok(None)
+    }
 }
 
 //// API handlers
@@ -434,7 +541,7 @@ impl ProxyHttp for App {
 impl App {
     async fn handle_api(&self, session: &mut Session, method: &str, path: &str) {
         let source_ip = get_source_ip(session);
-        let session_hours = self.session_hours;
+        let session_minutes = self.session_minutes;
 
         if method != "GET" && !check_referer_origin(session) {
             respond(session, json_error("CSRF check failed: missing or mismatched Origin/Referer")).await;
@@ -449,7 +556,7 @@ impl App {
                 return;
             }
             let body = read_full_request_body(session).await;
-            let (resp, cookie) = handle_login(&mut *state, &source_ip, &body, session_hours, self.demo).await;
+            let (resp, cookie) = handle_login(&mut *state, &source_ip, &body, session_minutes, self.demo).await;
             state.login_limiter.record_attempt(&source_ip);
             drop(state);
             if cookie.is_empty() {
@@ -467,6 +574,43 @@ impl App {
                 ("POST", "/api/auth/logout") => {
                     (handle_logout(&mut *state, session, &source_ip).await, String::new())
                 }
+                ("POST", "/api/auth/2fa/setup") => {
+                    drop(state);
+                    let body = read_full_request_body(session).await;
+                    let state = self.state.lock().await;
+                    (handle_2fa_setup(&state, session, &body).await, String::new())
+                }
+                ("POST", "/api/auth/2fa/verify") => {
+                    drop(state);
+                    let body = read_full_request_body(session).await;
+                    let mut state = self.state.lock().await;
+                    (handle_2fa_verify(&mut *state, session, &body, &source_ip).await, String::new())
+                }
+                ("POST", "/api/auth/2fa/disable") => {
+                    drop(state);
+                    let body = read_full_request_body(session).await;
+                    let mut state = self.state.lock().await;
+                    (handle_2fa_disable(&mut *state, session, &body, &source_ip).await, String::new())
+                }
+                ("PUT", "/api/auth/password") => {
+                    drop(state);
+                    let body = read_full_request_body(session).await;
+                    let state = self.state.lock().await;
+                    (handle_password_change(&state, session, &body).await, String::new())
+                }
+                ("POST", "/api/auth/login/2fa") => {
+                    let body = read_full_request_body(session).await;
+                    let session_minutes = self.session_minutes;
+                    let resp_tuple = handle_login_2fa(&mut *state, &source_ip, &body, session_minutes).await;
+                    drop(state);
+                    let (resp, cookie) = resp_tuple;
+                    if cookie.is_empty() {
+                        respond(session, resp).await;
+                    } else {
+                        respond_with_cookie(session, resp, &cookie).await;
+                    }
+                    return;
+                }
                 ("GET", "/api/auth/session") => {
                     (handle_session_check(&state, session, self.demo).await, String::new())
                 }
@@ -478,7 +622,7 @@ impl App {
                         stats.bytes_recv = ebpf_stats.bytes_recv;
                         stats.connections = ebpf_stats.active_conns;
                     }
-                    (json_body(&stats), String::new())
+                    (json_body(&ApiResponse::ok(&stats)), String::new())
                 }
                 ("GET", "/api/apps") => {
                     (handle_get_apps(&state, session, self.demo).await, String::new())
@@ -490,8 +634,8 @@ impl App {
                     (handle_create_app(&state, session, &body).await, String::new())
                 }
                 ("DELETE", _) if path.starts_with("/api/apps/") => {
-                    let app_id = match path[10..].parse::<i64>() {
-                        Ok(id) if id > 0 => id,
+                    let app_id = match path.strip_prefix("/api/apps/").and_then(|s| s.parse::<i64>().ok()) {
+                        Some(id) if id > 0 => id,
                         _ => { drop(state); respond(session, json_error("Invalid app ID")).await; return; }
                     };
                     (handle_delete_app(&state, session, app_id).await, String::new())
@@ -506,8 +650,8 @@ impl App {
                     (handle_create_user_api(&state, session, &body).await, String::new())
                 }
                 ("PUT", _) if path.starts_with("/api/users/") && path.ends_with("/permissions") => {
-                    let user_id = match path[10..path.len()-12].parse::<i64>() {
-                        Ok(id) if id > 0 => id,
+                    let user_id = match path.strip_prefix("/api/users/").and_then(|s| s.strip_suffix("/permissions")).and_then(|s| s.parse::<i64>().ok()) {
+                        Some(id) if id > 0 => id,
                         _ => { drop(state); respond(session, json_error("Invalid user ID")).await; return; }
                     };
                     drop(state);
@@ -540,7 +684,7 @@ fn make_session_cookie(session_id: &str, max_age: i64) -> String {
     format!("session={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", session_id, max_age)
 }
 
-async fn handle_demo_login(state: &mut AppState, source_ip: &str, session_hours: i64) -> (Bytes, String) {
+async fn handle_demo_login(state: &mut AppState, source_ip: &str, session_minutes: i64) -> (Bytes, String) {
     let demo_user = match find_user_by_username(&state.db, "admin").await {
         Ok(Some(u)) => u,
         _ => {
@@ -556,7 +700,7 @@ async fn handle_demo_login(state: &mut AppState, source_ip: &str, session_hours:
     };
 
     let session_id = Uuid::new_v4().to_string();
-    let expires_at = (Utc::now() + Duration::hours(session_hours)).format("%Y-%m-%d %H:%M:%S").to_string();
+    let expires_at = (Utc::now() + Duration::minutes(session_minutes)).format("%Y-%m-%d %H:%M:%S").to_string();
     if let Err(e) = create_session(&state.db, demo_user.id, &session_id, &expires_at).await {
         error!("Failed to create demo session: {}", e);
         return (json_error("Internal error"), String::new());
@@ -567,16 +711,17 @@ async fn handle_demo_login(state: &mut AppState, source_ip: &str, session_hours:
     let apps = get_user_apps(&state.db, demo_user.id).await.unwrap_or_default();
     info!("Demo login from {}", source_ip);
 
-    let max_age = session_hours * 3600;
+    let max_age = session_minutes * 60;
     let cookie = make_session_cookie(&session_id, max_age);
     (json_body(&ApiResponse::ok(&LoginResponse {
         session_id, username: demo_user.username, role: demo_user.role, apps,
+        two_fa_required: false, two_fa_challenge: String::new(),
     })), cookie)
 }
 
-async fn handle_login(state: &mut AppState, source_ip: &str, body: &str, session_hours: i64, demo: bool) -> (Bytes, String) {
+async fn handle_login(state: &mut AppState, source_ip: &str, body: &str, session_minutes: i64, demo: bool) -> (Bytes, String) {
     if demo {
-        return handle_demo_login(state, source_ip, session_hours).await;
+        return handle_demo_login(state, source_ip, session_minutes).await;
     }
 
     let login: LoginRequest = match serde_json::from_str(body) {
@@ -595,8 +740,22 @@ async fn handle_login(state: &mut AppState, source_ip: &str, body: &str, session
         Ok(Some(user)) => {
             let valid = argon2::verify_encoded(&user.password_hash, login.password.as_bytes()).unwrap_or(false);
             if valid {
+                if user.totp_enabled {
+                    let challenge = Uuid::new_v4().to_string();
+                    let username = user.username.clone();
+                    let role = user.role.clone();
+                    state.two_fa_challenges.insert(challenge.clone(), TwoFaChallenge {
+                        user_id: user.id,
+                        expires_at: Utc::now() + Duration::minutes(5),
+                    });
+                    let _ = create_audit_log(&state.db, Some(user.id), "2fa_challenge", source_ip, "/api/auth/login", "challenge_sent").await;
+                    return (json_body(&ApiResponse::ok(&LoginResponse {
+                        session_id: String::new(), username, role, apps: vec![],
+                        two_fa_required: true, two_fa_challenge: challenge,
+                    })), String::new());
+                }
                 let session_id = Uuid::new_v4().to_string();
-                let expires_at = (Utc::now() + Duration::hours(session_hours)).format("%Y-%m-%d %H:%M:%S").to_string();
+                let expires_at = (Utc::now() + Duration::minutes(session_minutes)).format("%Y-%m-%d %H:%M:%S").to_string();
                 if let Err(e) = create_session(&state.db, user.id, &session_id, &expires_at).await {
                     error!("Failed to create session: {}", e);
                     return (json_error("Internal error"), String::new());
@@ -605,10 +764,11 @@ async fn handle_login(state: &mut AppState, source_ip: &str, body: &str, session
                 let _ = create_audit_log(&state.db, Some(user.id), "login", source_ip, "/api/auth/login", "success").await;
                 let apps = get_user_apps(&state.db, user.id).await.unwrap_or_default();
                 info!("User '{}' logged in from {}", login.username, source_ip);
-                let max_age = session_hours * 3600;
+                let max_age = session_minutes * 60;
                 let cookie = make_session_cookie(&session_id, max_age);
                 (json_body(&ApiResponse::ok(&LoginResponse {
                     session_id, username: user.username, role: user.role, apps,
+                    two_fa_required: false, two_fa_challenge: String::new(),
                 })), cookie)
             } else {
                 let _ = create_audit_log(&state.db, None, "login_failed", source_ip, &format!("user: {}", login.username), "invalid_password").await;
@@ -635,17 +795,254 @@ async fn handle_logout(state: &mut AppState, session: &Session, source_ip: &str)
     json_body(&ApiResponse::ok(&"Logged out successfully"))
 }
 
+async fn handle_login_2fa(state: &mut AppState, source_ip: &str, body: &str, session_minutes: i64) -> (Bytes, String) {
+    let request: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return (json_error("Invalid request"), String::new()),
+    };
+    let challenge_token = request["challenge_token"].as_str().unwrap_or("");
+    let totp_code = request["totp_code"].as_str().unwrap_or("");
+
+    if challenge_token.is_empty() || totp_code.is_empty() {
+        return (json_error("Missing challenge_token or totp_code"), String::new());
+    }
+
+    if state.two_fa_limiter.is_blocked(source_ip) {
+        return (json_error("Too many 2FA attempts. Wait 60 seconds."), String::new());
+    }
+    state.two_fa_limiter.record_attempt(source_ip);
+
+    let challenge = match state.two_fa_challenges.remove(challenge_token) {
+        Some(c) => {
+            if Utc::now() > c.expires_at {
+                return (json_error("2FA challenge expired"), String::new());
+            }
+            c
+        }
+        None => return (json_error("Invalid 2FA challenge"), String::new()),
+    };
+
+    let user = match db::find_user_by_id(&state.db, challenge.user_id).await {
+        Ok(Some(u)) => u,
+        _ => return (json_error("User not found"), String::new()),
+    };
+
+    let secret = match &user.totp_secret {
+        Some(s) => s.clone(),
+        None => return (json_error("2FA not configured"), String::new()),
+    };
+
+    match totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1, 6, 1, 30,
+        totp_rs::Secret::Encoded(secret).to_bytes().unwrap(),
+        Some("Web SSL VPN".into()),
+        user.username.clone(),
+    ) {
+        Ok(totp) => {
+            if !totp.check_current(totp_code).unwrap_or(false) {
+                let _ = create_audit_log(&state.db, Some(user.id), "2fa_failed", source_ip, "/api/auth/login/2fa", "invalid_code").await;
+                return (json_error("Invalid 2FA code"), String::new());
+            }
+        }
+        Err(e) => {
+            error!("TOTP error: {}", e);
+            return (json_error("Internal error"), String::new());
+        }
+    }
+
+    let session_id = Uuid::new_v4().to_string();
+    let expires_at = (Utc::now() + Duration::minutes(session_minutes)).format("%Y-%m-%d %H:%M:%S").to_string();
+    if let Err(e) = create_session(&state.db, user.id, &session_id, &expires_at).await {
+        error!("Failed to create session: {}", e);
+        return (json_error("Internal error"), String::new());
+    }
+    state.status.add_session_with_info(session_id.clone(), &user.username, source_ip);
+    let _ = create_audit_log(&state.db, Some(user.id), "login", source_ip, "/api/auth/login/2fa", "success").await;
+    let apps = get_user_apps(&state.db, user.id).await.unwrap_or_default();
+    info!("User '{}' logged in with 2FA from {}", user.username, source_ip);
+    let max_age = session_minutes * 60;
+    let cookie = make_session_cookie(&session_id, max_age);
+    (json_body(&ApiResponse::ok(&LoginResponse {
+        session_id, username: user.username, role: user.role, apps,
+        two_fa_required: false, two_fa_challenge: String::new(),
+    })), cookie)
+}
+
+async fn handle_password_change(state: &AppState, session: &Session, body: &str) -> Bytes {
+    let user = match verify_auth(state, session).await {
+        Some(u) => u,
+        None => return json_error("Authentication required"),
+    };
+
+    let request: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return json_error("Invalid request"),
+    };
+    let old_password = request["old_password"].as_str().unwrap_or("");
+    let new_password = request["new_password"].as_str().unwrap_or("");
+
+    if !validate_password(new_password) {
+        return json_error("New password must be 8-128 characters");
+    }
+
+    if !argon2::verify_encoded(&user.password_hash, old_password.as_bytes()).unwrap_or(false) {
+        return json_error("Current password is incorrect");
+    }
+
+    let new_hash = match hash_password(new_password) {
+        Ok(h) => h,
+        Err(e) => { error!("{}", e); return json_error("Internal error"); }
+    };
+
+    if let Err(e) = update_user_password(&state.db, user.id, &new_hash).await {
+        error!("Failed to update password: {}", e);
+        return json_error("Internal error");
+    }
+
+    let _ = create_audit_log(&state.db, Some(user.id), "password_changed", "", "/api/auth/password", "success").await;
+    info!("User '{}' changed password", user.username);
+    json_body(&ApiResponse::ok(&"Password updated successfully"))
+}
+
+async fn handle_2fa_setup(state: &AppState, session: &Session, _body: &str) -> Bytes {
+    let user = match verify_auth(state, session).await {
+        Some(u) => u,
+        None => return json_error("Authentication required"),
+    };
+
+    let secret = totp_rs::Secret::generate_secret();
+    let secret_encoded = secret.to_encoded().to_string();
+
+    let totp = match totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1, 6, 1, 30,
+        secret.to_bytes().unwrap(),
+        Some("Web SSL VPN".into()),
+        user.username.clone(),
+    ) {
+        Ok(t) => t,
+        Err(e) => { error!("TOTP error: {}", e); return json_error("Internal error"); }
+    };
+
+    let qr_url = totp.get_url();
+    let qr_png = totp.get_qr().unwrap_or_default();
+
+    if let Err(e) = set_user_totp_secret(&state.db, user.id, &secret_encoded).await {
+        error!("Failed to set TOTP secret: {}", e);
+        return json_error("Internal error");
+    }
+
+    json_body(&ApiResponse::ok(&TwoFaSetupResponse {
+        secret: secret_encoded,
+        qr_url,
+        qr_png,
+    }))
+}
+
+async fn handle_2fa_verify(state: &mut AppState, session: &Session, body: &str, source_ip: &str) -> Bytes {
+    let user = match verify_auth(state, session).await {
+        Some(u) => u,
+        None => return json_error("Authentication required"),
+    };
+
+    let request: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return json_error("Invalid request"),
+    };
+    let code = request["code"].as_str().unwrap_or("");
+
+    if state.two_fa_limiter.is_blocked(source_ip) {
+        return json_error("Too many 2FA attempts. Wait 60 seconds.");
+    }
+    state.two_fa_limiter.record_attempt(source_ip);
+
+    let secret = match &user.totp_secret {
+        Some(s) => s.clone(),
+        None => return json_error("2FA not set up. Use /api/auth/2fa/setup first."),
+    };
+
+    let totp = match totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1, 6, 1, 30,
+        totp_rs::Secret::Encoded(secret).to_bytes().unwrap(),
+        Some("Web SSL VPN".into()),
+        user.username.clone(),
+    ) {
+        Ok(t) => t,
+        Err(e) => { error!("TOTP error: {}", e); return json_error("Internal error"); }
+    };
+
+    if !totp.check_current(code).unwrap_or(false) {
+        return json_error("Invalid verification code");
+    }
+
+    if let Err(e) = enable_user_totp(&state.db, user.id).await {
+        error!("Failed to enable TOTP: {}", e);
+        return json_error("Internal error");
+    }
+
+    let _ = create_audit_log(&state.db, Some(user.id), "2fa_enabled", "", "/api/auth/2fa/verify", "success").await;
+    info!("User '{}' enabled 2FA", user.username);
+    json_body(&ApiResponse::ok(&"2FA enabled successfully"))
+}
+
+async fn handle_2fa_disable(state: &mut AppState, session: &Session, body: &str, source_ip: &str) -> Bytes {
+    let user = match verify_auth(state, session).await {
+        Some(u) => u,
+        None => return json_error("Authentication required"),
+    };
+
+    let request: serde_json::Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return json_error("Invalid request"),
+    };
+    let code = request["code"].as_str().unwrap_or("");
+
+    if state.two_fa_limiter.is_blocked(source_ip) {
+        return json_error("Too many 2FA attempts. Wait 60 seconds.");
+    }
+    state.two_fa_limiter.record_attempt(source_ip);
+
+    if let Some(ref secret) = user.totp_secret {
+        let totp = match totp_rs::TOTP::new(
+            totp_rs::Algorithm::SHA1, 6, 1, 30,
+            totp_rs::Secret::Encoded(secret.clone()).to_bytes().unwrap(),
+            Some("Web SSL VPN".into()),
+            user.username.clone(),
+        ) {
+            Ok(t) => t,
+            Err(e) => { error!("TOTP error: {}", e); return json_error("Internal error"); }
+        };
+        if !totp.check_current(code).unwrap_or(false) {
+            return json_error("Invalid 2FA code");
+        }
+    }
+
+    if let Err(e) = disable_user_totp(&state.db, user.id).await {
+        error!("Failed to disable TOTP: {}", e);
+        return json_error("Internal error");
+    }
+
+    let _ = create_audit_log(&state.db, Some(user.id), "2fa_disabled", "", "/api/auth/2fa/disable", "success").await;
+    info!("User '{}' disabled 2FA", user.username);
+    json_body(&ApiResponse::ok(&"2FA disabled"))
+}
+
 async fn handle_session_check(state: &AppState, session: &Session, demo: bool) -> Bytes {
     if demo {
         return json_body(&ApiResponse::ok(&SessionResponse {
             authenticated: true,
             username: Some("admin".to_string()),
             role: Some("admin".to_string()),
+            totp_enabled: false,
         }));
     }
     match verify_auth(state, session).await {
-        Some(user) => json_body(&ApiResponse::ok(&SessionResponse { authenticated: true, username: Some(user.username), role: Some(user.role) })),
-        None => json_body(&ApiResponse::ok(&SessionResponse { authenticated: false, username: None, role: None })),
+        Some(user) => json_body(&ApiResponse::ok(&SessionResponse {
+            authenticated: true, username: Some(user.username), role: Some(user.role),
+            totp_enabled: user.totp_enabled,
+        })),
+        None => json_body(&ApiResponse::ok(&SessionResponse {
+            authenticated: false, username: None, role: None, totp_enabled: false,
+        })),
     }
 }
 
@@ -695,7 +1092,7 @@ async fn handle_delete_app(state: &AppState, session: &Session, app_id: i64) -> 
 async fn handle_get_users(state: &AppState, session: &Session) -> Bytes {
     if !verify_admin(state, session).await { return json_error("Admin access required"); }
     let users = get_all_users(&state.db).await.unwrap_or_default();
-    let safe_users: Vec<serde_json::Value> = users.into_iter().map(|u| serde_json::json!({"id": u.id, "username": u.username, "role": u.role, "created_at": u.created_at})).collect();
+    let safe_users: Vec<serde_json::Value> = users.into_iter().map(|u| serde_json::json!({"id": u.id, "username": u.username, "role": u.role, "totp_enabled": u.totp_enabled, "created_at": u.created_at})).collect();
     json_body(&ApiResponse::ok(&safe_users))
 }
 
@@ -736,20 +1133,37 @@ async fn handle_get_audit_logs(state: &AppState, session: &Session, demo: bool) 
         if logs.is_empty() {
             return json_body(&ApiResponse::ok(&demo_audit_logs()));
         }
-        return json_body(&ApiResponse::ok(&logs));
+        return json_body(&ApiResponse::ok(&audit_logs_with_usernames(&state.db, logs).await.unwrap_or_default()));
     }
     if !verify_admin(state, session).await { return json_error("Admin access required"); }
     let logs = get_audit_logs(&state.db, 100).await.unwrap_or_default();
-    json_body(&ApiResponse::ok(&logs))
+    let enriched = audit_logs_with_usernames(&state.db, logs).await.unwrap_or_default();
+    json_body(&ApiResponse::ok(&enriched))
+}
+
+async fn audit_logs_with_usernames(db: &sea_orm::DatabaseConnection, logs: Vec<db::AuditLog>) -> Result<Vec<AuditLogResponse>, sea_orm::DbErr> {
+    let users = get_all_users(db).await?;
+    let mut user_map = std::collections::HashMap::new();
+    for u in &users { user_map.insert(u.id, u.username.clone()); }
+    Ok(logs.into_iter().map(|l| {
+        let username = l.user_id.and_then(|id| user_map.get(&id).cloned()).unwrap_or_else(|| "system".into());
+        AuditLogResponse { id: l.id, user_id: l.user_id, username, action: l.action, source_ip: l.source_ip, target_url: l.target_url, result: l.result, timestamp: l.timestamp }
+    }).collect())
+}
+
+#[derive(serde::Serialize)]
+struct AuditLogResponse {
+    id: i64, user_id: Option<i64>, username: String,
+    action: String, source_ip: String, target_url: String, result: String, timestamp: String,
 }
 
 fn demo_audit_logs() -> Vec<serde_json::Value> {
     vec![
-        serde_json::json!({"id": 1, "timestamp": "09:30:00", "user_id": 1, "action": "login", "target_url": "/api/auth/login", "source_ip": "192.168.1.100", "result": "success"}),
-        serde_json::json!({"id": 2, "timestamp": "09:31:00", "user_id": 2, "action": "proxy_access", "target_url": "wiki.internal:3000", "source_ip": "10.0.0.55", "result": "success"}),
-        serde_json::json!({"id": 3, "timestamp": "09:32:00", "user_id": 3, "action": "access_denied", "target_url": "mail.internal:8080", "source_ip": "192.168.1.200", "result": "denied"}),
-        serde_json::json!({"id": 4, "timestamp": "09:33:00", "user_id": 1, "action": "proxy_access", "target_url": "files.internal:9000", "source_ip": "192.168.1.100", "result": "success"}),
-        serde_json::json!({"id": 5, "timestamp": "09:34:00", "user_id": 2, "action": "logout", "target_url": "/api/auth/logout", "source_ip": "10.0.0.55", "result": "success"}),
+        serde_json::json!({"id": 1, "timestamp": "09:30:00", "user_id": 1, "username": "admin", "action": "login", "target_url": "/api/auth/login", "source_ip": "192.168.1.100", "result": "success"}),
+        serde_json::json!({"id": 2, "timestamp": "09:31:00", "user_id": 2, "username": "user1", "action": "proxy_access", "target_url": "wiki.internal:3000", "source_ip": "10.0.0.55", "result": "success"}),
+        serde_json::json!({"id": 3, "timestamp": "09:32:00", "user_id": 3, "username": "guest", "action": "access_denied", "target_url": "mail.internal:8080", "source_ip": "192.168.1.200", "result": "denied"}),
+        serde_json::json!({"id": 4, "timestamp": "09:33:00", "user_id": 1, "username": "admin", "action": "proxy_access", "target_url": "files.internal:9000", "source_ip": "192.168.1.100", "result": "success"}),
+        serde_json::json!({"id": 5, "timestamp": "09:34:00", "user_id": 2, "username": "user1", "action": "logout", "target_url": "/api/auth/logout", "source_ip": "10.0.0.55", "result": "success"}),
     ]
 }
 
@@ -769,7 +1183,7 @@ fn main() {
     };
 
     let db_path = &config.db_path;
-    let session_hours = config.session_hours;
+    let session_minutes = config.session_minutes;
     let db = rt.block_on(async {
         match init_database(db_path).await {
             Ok(db) => {
@@ -794,6 +1208,8 @@ fn main() {
         ebpf: ebpf_monitor,
         db,
         login_limiter: LoginRateLimiter::new(10, 15),
+        two_fa_limiter: LoginRateLimiter::new(2, 1),
+        two_fa_challenges: HashMap::new(),
     }));
 
     rt.spawn(async move {
@@ -818,7 +1234,7 @@ fn main() {
     };
     server.bootstrap();
 
-    let app = App { state, static_files, dashboard_index, session_hours, demo: config.demo };
+    let app = App { state, static_files, dashboard_index, session_minutes, demo: config.demo };
     let mut proxy = http_proxy_service(&server.configuration, app);
     proxy.add_tcp(&config.http_bind);
     info!("HTTP listener on {}", config.http_bind);

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["server", "web", "ebpf"]
+members = ["server", "web", "ebpf", "desktop"]
 
 [workspace.package]
 version = "0.1.0"

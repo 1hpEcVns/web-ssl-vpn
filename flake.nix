@@ -28,6 +28,7 @@
               cmake
               perl
               sudo
+              pkg-config
               llvmPackages_latest.llvm
             ];
 
@@ -37,6 +38,14 @@
             buildInputs = with pkgs; [
               libxkbcommon
               vulkan-loader
+              wayland
+              wayland-protocols
+              libGL
+              libx11
+              libxcursor
+              libxrandr
+              libxi
+              libxcb
             ];
 
             LIBCLANG_PATH = "${pkgs.llvmPackages_latest.libclang}/lib";
@@ -47,6 +56,9 @@
 
               export http_proxy="''${http_proxy:-http://127.0.0.1:7897}"
               export https_proxy="''${https_proxy:-http://127.0.0.1:7897}"
+
+              # GUI libraries for iced desktop
+              export LD_LIBRARY_PATH="${pkgs.libGL}/lib:${pkgs.libxkbcommon}/lib:${pkgs.libx11}/lib:${pkgs.libxcursor}/lib:${pkgs.libxrandr}/lib:${pkgs.libxi}/lib:${pkgs.libxcb}/lib:${pkgs.wayland}/lib:''${LD_LIBRARY_PATH:-}"
 
               if ! rustup toolchain list | grep -q nightly; then
                 rustup toolchain install nightly

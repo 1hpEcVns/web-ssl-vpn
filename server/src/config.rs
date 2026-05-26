@@ -10,7 +10,7 @@ pub struct ServerConfig {
     pub ca_bundle: PathBuf,
     pub db_path: PathBuf,
     pub static_dir: PathBuf,
-    pub session_hours: i64,
+    pub session_minutes: i64,
     pub log_level: String,
     pub demo: bool,
     pub ebpf_iface: String,
@@ -27,7 +27,7 @@ impl Default for ServerConfig {
             ca_bundle: PathBuf::from("certs/ca-bundle.crt"),
             db_path: PathBuf::from("vpn.db"),
             static_dir: PathBuf::from("web/dist"),
-            session_hours: 8,
+            session_minutes: 5,
             log_level: "info".into(),
             demo: false,
             ebpf_iface: "lo".into(),
@@ -47,8 +47,8 @@ impl ServerConfig {
         if let Ok(v) = env::var("VPN_CA_BUNDLE") { cfg.ca_bundle = PathBuf::from(v); }
         if let Ok(v) = env::var("VPN_DB_PATH") { cfg.db_path = PathBuf::from(v); }
         if let Ok(v) = env::var("VPN_STATIC_DIR") { cfg.static_dir = PathBuf::from(v); }
-        if let Ok(v) = env::var("VPN_SESSION_HOURS") {
-            if let Ok(h) = v.parse::<i64>() { cfg.session_hours = h; }
+        if let Ok(v) = env::var("VPN_SESSION_MINUTES") {
+            if let Ok(m) = v.parse::<i64>() { cfg.session_minutes = m; }
         }
         if let Ok(v) = env::var("VPN_LOG_LEVEL") { cfg.log_level = v; }
         if let Ok(v) = env::var("VPN_DEMO") {
@@ -70,7 +70,7 @@ impl ServerConfig {
         log::info!("TLS cert:        {} ({})", self.tls_cert.display(), if self.is_tls_configured() { "OK" } else { "MISSING" });
         log::info!("DB path:         {}", self.db_path.display());
         log::info!("Static dir:      {}", self.static_dir.display());
-        log::info!("Session timeout: {} hours", self.session_hours);
+        log::info!("Session timeout: {} minutes", self.session_minutes);
         log::info!("eBPF interface:  {}", self.ebpf_iface);
         if let Some(ref p) = self.ebpf_bpf_path { log::info!("eBPF BPF path:   {}", p); }
         if self.demo { log::warn!("*** DEMO MODE ENABLED - Authentication bypassed, data is simulated ***"); }
@@ -86,7 +86,7 @@ mod tests {
         let cfg = ServerConfig::default();
         assert_eq!(cfg.http_bind, "0.0.0.0:8080");
         assert_eq!(cfg.https_bind, "0.0.0.0:8443");
-        assert_eq!(cfg.session_hours, 8);
+        assert_eq!(cfg.session_minutes, 5);
         assert_eq!(cfg.log_level, "info");
     }
 
@@ -94,7 +94,7 @@ mod tests {
     fn test_from_env_defaults() {
         let cfg = ServerConfig::from_env();
         assert_eq!(cfg.http_bind, "0.0.0.0:8080");
-        assert_eq!(cfg.session_hours, 8);
+        assert_eq!(cfg.session_minutes, 5);
     }
 
     #[test]

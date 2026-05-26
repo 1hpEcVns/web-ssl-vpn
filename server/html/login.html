@@ -16,15 +16,21 @@
         input:focus { border-color: #4fc3f7; }
         button { width: 100%; padding: 12px; background: linear-gradient(135deg, #0f3460, #16213e); color: #e0e0e0; border: 1px solid rgba(79,195,247,0.3); border-radius: 8px; font-size: 15px; cursor: pointer; transition: all 0.2s; }
         button:hover { background: linear-gradient(135deg, #16213e, #1a1a2e); border-color: #4fc3f7; }
+        .back { background: transparent; border: 1px solid rgba(255,255,255,0.15); margin-top: 8px; }
+        .back:hover { border-color: #4fc3f7; }
         .error { color: #ef5350; text-align: center; margin-top: 12px; font-size: 13px; display: none; }
+        .info { color: #4fc3f7; text-align: center; margin-top: 12px; font-size: 12px; }
         .footer { text-align: center; color: #606060; margin-top: 24px; font-size: 12px; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Web SSL VPN</h1>
-        <h2>Secure Remote Access Gateway</h2>
-        <form id="loginForm">
+        <h2 id="subtitle">Secure Remote Access Gateway</h2>
+
+        <!-- Step 1: Password -->
+        <form id="stepPassword">
             <div class="form-group">
                 <label for="username">Username</label>
                 <input type="text" id="username" name="username" required autocomplete="username">
@@ -34,15 +40,30 @@
                 <input type="password" id="password" name="password" required autocomplete="current-password">
             </div>
             <button type="submit">Sign In</button>
-            <div class="error" id="error"></div>
+            <div class="error" id="error1"></div>
         </form>
-        <div class="footer">Default admin: admin / admin123</div>
+
+        <!-- Step 2: 2FA -->
+        <form id="step2FA" class="hidden">
+            <div class="info">Account <b id="faUser"></b> requires two-factor authentication</div>
+            <div class="form-group" style="margin-top:20px">
+                <label for="totp">Authentication Code</label>
+                <input type="text" id="totp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="000000" required>
+            </div>
+            <button type="submit">Verify</button>
+            <button type="button" class="back" onclick="showStep1()">&larr; Back</button>
+            <div class="error" id="error2"></div>
+        </form>
+
+        <div class="footer" id="footer">Default admin: admin / admin123</div>
     </div>
     <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        let challengeToken = '';
+
+        document.getElementById('stepPassword').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const errorEl = document.getElementById('error');
-            errorEl.style.display = 'none';
+            const errEl = document.getElementById('error1');
+            errEl.style.display = 'none';
             try {
                 const res = await fetch('/api/auth/login', {
                     method: 'POST',
@@ -53,17 +74,62 @@
                     })
                 });
                 const data = await res.json();
+                if (!data.success) {
+                    errEl.textContent = data.error || 'Login failed';
+                    errEl.style.display = 'block';
+                    return;
+                }
+                if (data.data && data.data.two_fa_required) {
+                    challengeToken = data.data.two_fa_challenge;
+                    document.getElementById('faUser').textContent = data.data.username;
+                    document.getElementById('stepPassword').classList.add('hidden');
+                    document.getElementById('step2FA').classList.remove('hidden');
+                    document.getElementById('subtitle').textContent = 'Two-Factor Authentication';
+                    document.getElementById('footer').style.display = 'none';
+                    document.getElementById('totp').focus();
+                } else {
+                    window.location.href = '/';
+                }
+            } catch (err) {
+                errEl.textContent = 'Network error. Please try again.';
+                errEl.style.display = 'block';
+            }
+        });
+
+        document.getElementById('step2FA').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const errEl = document.getElementById('error2');
+            errEl.style.display = 'none';
+            try {
+                const res = await fetch('/api/auth/login/2fa', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        challenge_token: challengeToken,
+                        totp_code: document.getElementById('totp').value
+                    })
+                });
+                const data = await res.json();
                 if (data.success) {
                     window.location.href = '/';
                 } else {
-                    errorEl.textContent = data.error || 'Login failed';
-                    errorEl.style.display = 'block';
+                    errEl.textContent = data.error || 'Verification failed';
+                    errEl.style.display = 'block';
                 }
             } catch (err) {
-                errorEl.textContent = 'Network error. Please try again.';
-                errorEl.style.display = 'block';
+                errEl.textContent = 'Network error. Please try again.';
+                errEl.style.display = 'block';
             }
         });
+
+        function showStep1() {
+            document.getElementById('stepPassword').classList.remove('hidden');
+            document.getElementById('step2FA').classList.add('hidden');
+            document.getElementById('subtitle').textContent = 'Secure Remote Access Gateway';
+            document.getElementById('footer').style.display = '';
+            document.getElementById('error1').style.display = 'none';
+            document.getElementById('error2').style.display = 'none';
+        }
     </script>
 </body>
 </html>

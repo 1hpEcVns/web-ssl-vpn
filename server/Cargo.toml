@@ -25,3 +25,5 @@ uuid = { workspace = true }
 thiserror = { workspace = true }
 aya = { workspace = true }
 anyhow = "1"
+totp-rs = { version = "5", features = ["gen_secret", "otpauth", "qr"] }
+base64 = "0.22"
